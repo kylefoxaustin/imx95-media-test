@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 cmake_minimum_required(VERSION 3.16)
-project(imx95-media-test LANGUAGES CXX)
+project(imx95-media-test VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,7 @@ add_executable(imx95-test
 
 target_include_directories(imx95-test PRIVATE src)
 target_compile_options(imx95-test PRIVATE -Wall -Wextra)
+target_compile_definitions(imx95-test PRIVATE IMX95_VERSION="${PROJECT_VERSION}")
 
 find_package(Threads REQUIRED)
 target_link_libraries(imx95-test PRIVATE Threads::Threads)

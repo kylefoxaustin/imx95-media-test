@@ -170,7 +170,11 @@ VPU decode uses **Big Buck Bunny** (© Blender Foundation, CC-BY 3.0).
 native-resolution H.264 Annex-B clips into `assets/clips/` (gitignored); the
 build bakes them into the binary, so there is still only one file to deploy.
 
+## Maintainer
+
+Created and maintained by **Kyle Fox** ([@kylefoxaustin](https://github.com/kylefoxaustin)).
+
 ## License
 
-BSD-3-Clause. See [`LICENSE`](LICENSE). Bundled Big Buck Bunny frames are
-CC-BY 3.0, © Blender Foundation.
+BSD-3-Clause, © 2026 Kyle Fox. See [`LICENSE`](LICENSE). Bundled Big Buck Bunny
+frames are CC-BY 3.0, © Blender Foundation.

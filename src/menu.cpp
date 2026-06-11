@@ -9,6 +9,10 @@
 #include "config.hpp"
 #include "runner.hpp"
 
+#ifndef IMX95_VERSION
+#define IMX95_VERSION "dev"
+#endif
+
 namespace imx95 {
 
 namespace {
@@ -157,8 +161,8 @@ void loadsave_menu(Config& cfg) {
 void run_app() {
     install_signal_handlers();
     Config cfg;
-    std::printf("\n== i.MX95 Media Test Framework ==   (backends: gpu:%s vpu:%s ddr:%s)\n",
-                gpu_backend_name(), vpu_backend_name(), ddr_backend_name());
+    std::printf("\n== i.MX95 Media Test Framework v%s ==   (backends: gpu:%s vpu:%s ddr:%s)\n",
+                IMX95_VERSION, gpu_backend_name(), vpu_backend_name(), ddr_backend_name());
 
     for (;;) {
         rule();
