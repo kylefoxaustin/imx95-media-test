@@ -39,6 +39,23 @@ expose cross-block interference.
 Decode and encode are independent (run both at once), but each is
 single-resolution. The GPU level is a single choice.
 
+## What the workloads look like
+
+The GPU workload renders a procedural lit-sphere scene whose cost scales across
+the levels — geometry, light count, and per-pixel shader work all increase:
+
+![GPU scene at low / mid / max](docs/images/gpu_scene.png)
+
+The VPU encode workload is fed procedurally generated frames: a deterministic
+*moving byte pattern*, not a real image — for a codec **throughput** test the
+pixel content is irrelevant, only that frames differ each tick. (Decode loops a
+bitstream produced by encoding a few of these into memory, so no media files are
+needed.)
+
+![VPU synthetic encoder input](docs/images/vpu_synthetic.png)
+
+> Captured headless via EGL surfaceless with `IMX95_GPU_DUMP=<path.ppm>`.
+
 ## Design at a glance
 
 - **Single self-contained binary.** It talks to the VPU directly via V4L2
