@@ -49,6 +49,7 @@ struct Track {
     Workload* w;
     uint64_t last_frames = 0;
     std::atomic<bool> inited{false};
+    std::atomic<bool> finished{false};  // worker's step loop has ended
     bool ok = false;
     std::string err;
     double active = 0;  // seconds this workload actually ran (set by its worker)
@@ -72,6 +73,7 @@ void worker(Track* t, uint64_t target_loops, std::atomic<bool>* stop, std::atomi
             break;
     }
     t->active = std::chrono::duration<double>(Clock::now() - wstart).count();
+    t->finished.store(true, std::memory_order_release);
     t->w->shutdown();
     running->fetch_sub(1, std::memory_order_relaxed);
 }
@@ -101,9 +103,19 @@ void draw(const Tracks& tracks, double elapsed,
     std::printf("\n");
 
     for (size_t i = 0; i < tracks.size(); ++i) {
-        uint64_t frames = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
-        std::printf("  %-10s %8.1f fps   frames %10llu", tracks[i]->w->stats()->name.c_str(),
-                    fps[i], static_cast<unsigned long long>(frames));
+        const Track* tk = tracks[i].get();
+        uint64_t frames = tk->w->stats()->frames.load(std::memory_order_relaxed);
+        const char* name = tk->w->stats()->name.c_str();
+        if (tk->finished.load(std::memory_order_acquire)) {
+            // Finished its pass (run-once / fixed-count) and stopped — show the
+            // completed average instead of a misleading live 0.0 fps.
+            double avg = tk->active > 0 ? frames / tk->active : 0.0;
+            std::printf("  %-10s     done   frames %10llu   (avg %.1f fps)", name,
+                        static_cast<unsigned long long>(frames), avg);
+        } else {
+            std::printf("  %-10s %8.1f fps   frames %10llu", name, fps[i],
+                        static_cast<unsigned long long>(frames));
+        }
         term_clear_to_eol();
         std::printf("\n");
     }
@@ -240,7 +252,11 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
         term_clear();
         auto last = Clock::now();
         DdrSample last_ddr = base;
-        std::vector<uint64_t> last_frames(tracks.size(), 0);
+        // Per-workload fps is sampled over a ~0.8 s window (not the 150 ms render
+        // tick) so it stays stable for both very fast and very slow workloads
+        // instead of flickering to 0.0 when a tick catches no completed frame.
+        auto fps_t0 = Clock::now();
+        std::vector<uint64_t> fps_base(tracks.size(), 0);
         std::vector<double> fps(tracks.size(), 0.0);
 
         for (;;) {
@@ -250,10 +266,14 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
             double dt = std::chrono::duration<double>(now - last).count();
             DdrSample cur = ddr->sample();
 
-            for (size_t i = 0; i < tracks.size(); ++i) {
-                uint64_t f = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
-                if (dt > 0) fps[i] = (f - last_frames[i]) / dt;
-                last_frames[i] = f;
+            double fdt = std::chrono::duration<double>(now - fps_t0).count();
+            if (fdt >= 0.8) {
+                for (size_t i = 0; i < tracks.size(); ++i) {
+                    uint64_t f = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
+                    fps[i] = (f - fps_base[i]) / fdt;
+                    fps_base[i] = f;
+                }
+                fps_t0 = now;
             }
             double ddr_r = dt > 0 ? (cur.read_bytes - last_ddr.read_bytes) / dt : 0.0;
             double ddr_w = dt > 0 ? (cur.write_bytes - last_ddr.write_bytes) / dt : 0.0;
@@ -276,6 +296,9 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
                 if (act == 'q') { outcome = RunOutcome::QuitApp; break; }
                 last = Clock::now();              // don't count paused time as a huge dt
                 last_ddr = ddr->sample();
+                fps_t0 = Clock::now();
+                for (size_t i = 0; i < tracks.size(); ++i)
+                    fps_base[i] = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
                 term_clear();
             } else if (c == 'q') {
                 outcome = RunOutcome::QuitApp;

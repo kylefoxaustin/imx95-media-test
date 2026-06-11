@@ -57,7 +57,14 @@ IMX95_VPU_CODEC=hevc ./imx95-test         # or h264 (default)
 IMX95_DDR_BEAT_BYTES=32 ./imx95-test      # confirm against the i.MX95 RM
 IMX95_VPU_ENCODE_DEV=/dev/videoN ./imx95-test   # pin nodes if auto-discovery misses
 IMX95_VPU_DECODE_DEV=/dev/videoM
+IMX95_VPU_STREAM=/path/clip.h264 ./imx95-test   # decode your own Annex-B stream
 ```
+
+**Decode content:** H.264 decode uses the real Big Buck Bunny clips baked into
+the binary (720p/1080p/4K, picked to match the menu resolution), so decode fps
+is representative. Order of preference: `IMX95_VPU_STREAM` file → embedded clip →
+synthetic fallback. (HEVC/FWHT have no embedded clip, so they use the synthetic
+bitstream unless you pass `IMX95_VPU_STREAM`.)
 
 GPU levels default to Mali-G310-appropriate loads. Tune any field live without
 rebuilding (overrides the selected level):

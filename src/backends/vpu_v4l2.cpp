@@ -18,12 +18,14 @@
 #include <linux/videodev2.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "backend.hpp"
+#include "backends/embedded_clips.hpp"
 #include "backends/traffic_estimate.hpp"
 #include "backends/v4l2_m2m.hpp"
 
@@ -54,6 +56,47 @@ void fill_synthetic(uint8_t* p, size_t len, uint64_t frame) {
     uint8_t base = static_cast<uint8_t>(frame * 3);
     for (size_t i = 0; i < len; ++i)
         p[i] = static_cast<uint8_t>(base + (i * 7) + (i >> 8));
+}
+
+bool read_whole_file(const char* path, std::vector<uint8_t>& out) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    long n = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (n <= 0) { std::fclose(f); return false; }
+    out.resize(static_cast<size_t>(n));
+    size_t r = std::fread(out.data(), 1, out.size(), f);
+    std::fclose(f);
+    return r == out.size();
+}
+
+// Split an Annex-B elementary stream into access units (one decoded frame each):
+// accumulate NAL units until a VCL slice NAL (types 1-5) closes the AU. Works
+// for the one-slice-per-frame streams x264 produces. Each AU keeps its start
+// codes so it can be queued straight to the decoder's OUTPUT buffer.
+std::vector<std::vector<uint8_t>> split_annexb_au(const uint8_t* p, size_t n) {
+    std::vector<size_t> sc;  // start-code offsets
+    for (size_t k = 0; k + 3 <= n;) {
+        if (p[k] == 0 && p[k + 1] == 0 && p[k + 2] == 1) { sc.push_back(k); k += 3; }
+        else if (k + 4 <= n && p[k] == 0 && p[k + 1] == 0 && p[k + 2] == 0 && p[k + 3] == 1) {
+            sc.push_back(k);
+            k += 4;
+        } else {
+            ++k;
+        }
+    }
+    std::vector<std::vector<uint8_t>> aus;
+    std::vector<uint8_t> cur;
+    for (size_t s = 0; s < sc.size(); ++s) {
+        size_t a = sc[s], b = (s + 1 < sc.size()) ? sc[s + 1] : n;
+        size_t hdr = (a + 2 < n && p[a + 2] == 1) ? a + 3 : a + 4;  // skip 3- or 4-byte start code
+        uint8_t nal_type = (hdr < n) ? (p[hdr] & 0x1F) : 0;
+        cur.insert(cur.end(), p + a, p + b);
+        if (nal_type >= 1 && nal_type <= 5) { aus.push_back(std::move(cur)); cur.clear(); }
+    }
+    if (!cur.empty()) aus.push_back(std::move(cur));
+    return aus;
 }
 
 struct EncSetup {
@@ -177,16 +220,10 @@ public:
     uint64_t frames_per_loop() const override { return 300; }
 
     bool init(std::string& err) override {
-        // 1. Bootstrap a bitstream into memory (zero external assets).
-        {
-            V4l2Encoder enc(res_, codec_);
-            if (!enc.init(err)) { err = "decode bootstrap encode: " + err; return false; }
-            for (int i = 0; i < kBootstrapFrames; ++i)
-                if (!enc.encode_one(&coded_)) break;
-            coded_size_ = enc.setup().coded_size;
-            enc.shutdown();
-        }
-        if (coded_.empty()) { err = "decode bootstrap produced no coded frames"; return false; }
+        // 1. Pick a bitstream: explicit file, else embedded real clip, else a
+        //    synthetic in-memory bootstrap (no assets).
+        if (!load_bitstream(err)) return false;
+        if (coded_.empty()) { err = "decode: no coded frames from " + source_; return false; }
 
         // 2. Open the decoder and stream the coded buffers in.
         resolution(res_, w_, h_);
@@ -253,6 +290,43 @@ public:
     }
 
 private:
+    // Fill coded_ + coded_size_ from the best available bitstream source.
+    bool load_bitstream(std::string& err) {
+        auto from_annexb = [&](const uint8_t* d, size_t n) {
+            coded_ = split_annexb_au(d, n);
+            size_t mx = 0;
+            for (auto& au : coded_) mx = au.size() > mx ? au.size() : mx;
+            coded_size_ = static_cast<uint32_t>(mx) + (64u << 10);  // largest AU + slack
+            if (coded_size_ < (512u << 10)) coded_size_ = 512u << 10;
+        };
+
+        if (const char* sf = std::getenv("IMX95_VPU_STREAM"); sf && *sf) {
+            std::vector<uint8_t> blob;
+            if (!read_whole_file(sf, blob)) { err = std::string("cannot read ") + sf; return false; }
+            from_annexb(blob.data(), blob.size());
+            source_ = sf;
+            return true;
+        }
+        if (codec_ == V4L2_PIX_FMT_H264) {
+            const uint8_t* d;
+            size_t n;
+            if (embedded_clip(res_, d, n)) {
+                from_annexb(d, n);
+                source_ = "embedded Big Buck Bunny";
+                return true;
+            }
+        }
+        // Synthetic fallback: encode a few frames into memory and loop them.
+        V4l2Encoder enc(res_, codec_);
+        if (!enc.init(err)) { err = "decode bootstrap encode: " + err; return false; }
+        for (int i = 0; i < kBootstrapFrames; ++i)
+            if (!enc.encode_one(&coded_)) break;
+        coded_size_ = enc.setup().coded_size;
+        enc.shutdown();
+        source_ = "synthetic";
+        return true;
+    }
+
     void feed_coded(int idx) {
         std::string err;
         const auto& src = coded_[coded_idx_];
@@ -282,6 +356,7 @@ private:
     std::vector<std::vector<uint8_t>> coded_;
     size_t coded_idx_ = 0;
     bool cap_ready_ = false;
+    std::string source_;
 };
 
 uint32_t selected_codec() {

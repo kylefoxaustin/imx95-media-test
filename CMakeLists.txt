@@ -46,7 +46,23 @@ endif()
 # --- VPU ---------------------------------------------------------------------
 if(IMX95_VPU STREQUAL "v4l2")
   # V4L2 mem2mem codec: just kernel ioctls, no extra libraries to link.
-  target_sources(imx95-test PRIVATE src/backends/vpu_v4l2.cpp src/backends/v4l2_m2m.cpp)
+  target_sources(imx95-test PRIVATE src/backends/vpu_v4l2.cpp src/backends/v4l2_m2m.cpp
+                                    src/backends/embedded_clips.cpp)
+  # Bake the real Big Buck Bunny H.264 clips into the binary when present, so
+  # decode has representative content with no file to upload (fetch-assets.sh
+  # generates them; they are gitignored). Falls back to a synthetic bitstream.
+  set(IMX95_CLIPS_DIR "${CMAKE_SOURCE_DIR}/assets/clips")
+  if(EXISTS "${IMX95_CLIPS_DIR}/bbb_720p.h264" AND
+     EXISTS "${IMX95_CLIPS_DIR}/bbb_1080p.h264" AND
+     EXISTS "${IMX95_CLIPS_DIR}/bbb_4k.h264")
+    enable_language(ASM)
+    configure_file(src/backends/clips.S.in "${CMAKE_BINARY_DIR}/clips.S" @ONLY)
+    target_sources(imx95-test PRIVATE "${CMAKE_BINARY_DIR}/clips.S")
+    target_compile_definitions(imx95-test PRIVATE IMX95_HAVE_CLIPS=1)
+    message(STATUS "Embedding Big Buck Bunny clips from ${IMX95_CLIPS_DIR}")
+  else()
+    message(STATUS "No embedded clips (assets/clips/*.h264 absent); decode uses synthetic bitstream")
+  endif()
 elseif(IMX95_VPU STREQUAL "mock")
   target_sources(imx95-test PRIVATE src/backends/vpu_mock.cpp)
 else()
