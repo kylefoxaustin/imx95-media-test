@@ -256,6 +256,73 @@ void loadsave_menu(Config& cfg) {
 
 } // namespace
 
+// Succinct operating guide, paginated so it never scrolls off in one blast.
+void show_help() {
+    static const char* p1 = R"(i.MX95 Media Test Framework - quick help   (1/3)
+
+WHAT IT DOES
+  Apply heavy GPU / VPU workloads (alone or together) and measure how they
+  affect each other - chiefly via global DDR memory bandwidth.
+
+MAIN MENU
+  1) Configure   choose which blocks to run, and how hard
+  2) Run         start the selected workloads
+  3) Detached    view / stop runs launched in the background
+  4) Load/Save   store or reload your configuration
+  h) Help (this screen)     q) Quit
+
+CONFIGURE
+  GPU:  off / low / mid / max.
+  VPU decode and encode are independent (run both) and each is one
+  resolution: 720p / 1080p / 4k. A choice applies immediately; 'b' = back.)";
+
+    static const char* p2 = R"(i.MX95 Media Test Framework - quick help   (2/3)
+
+RUN MODES  (menu 2)
+  1) Continuous   runs until you stop it
+  2) Once         each workload does one full pass
+  3) Fixed count  a set number of loops
+  4) Detached     runs in the background, logs to a file (menu stays free)
+
+DURING A LIVE RUN
+  space    open a menu: resume / stop & report / quit
+  Ctrl-C   stop gracefully
+  Either way you get a per-workload + DDR report when it ends.
+
+DETACHED RUNS
+  Start:  Run -> 4, pick a mode, press Enter for the default log name.
+          You return to the menu and can launch more runs alongside it.
+  Stop:   main menu -> Detached runs -> a number (or 'a' for all),
+          or from a shell: kill <pid> (printed when it starts).
+  Watch:  tail -f <logfile>.   Each run writes a final report to its log.)";
+
+    static const char* p3 = R"(i.MX95 Media Test Framework - quick help   (3/3)
+
+WHAT THE NUMBERS MEAN
+  Per workload : frames, average fps, bytes moved, buffer footprint.
+  DDR          : global SoC read/write bandwidth - the cross-block
+                 interference signal. Compare a block alone vs. with others.
+
+TUNING  (environment variables, set before launching the program)
+  GPU load : IMX95_GPU_W _H _SUBDIV _INSTANCES _LIGHTS _EXTRA _PASSES
+  VPU      : IMX95_VPU_CODEC=h264|hevc   IMX95_VPU_STREAM=<file.h264>
+  DDR      : IMX95_DDR_BEAT_BYTES=32 (confirm against the reference manual)
+  GPU disp : IMX95_EGL_PLATFORM=gbm|default   IMX95_DRM_DEVICE=/dev/dri/cardN
+
+  Run as root so the DDR PMU and codec/GPU device nodes are accessible.)";
+
+    const char* pages[] = {p1, p2, p3};
+    for (int i = 0; i < 3; ++i) {
+        rule();
+        std::puts(pages[i]);
+        if (i < 2) {
+            if (read_line("\n-- Enter for more, q to stop -- ") == "q") return;
+        } else {
+            read_line("\n-- end of help, press Enter -- ");
+        }
+    }
+}
+
 void run_app() {
     install_signal_handlers();
     Config cfg;
@@ -272,12 +339,14 @@ void run_app() {
         std::puts("  2) Run");
         std::printf("  3) Detached runs%s\n", active ? (" (" + std::to_string(active) + " active)").c_str() : "");
         std::puts("  4) Load / Save config");
+        std::puts("  h) Help");
         std::puts("  q) Quit");
         std::string c = read_line("> ");
         if (c == "1") configure_menu(cfg);
         else if (c == "2") { if (run_menu(cfg)) break; }
         else if (c == "3") detached_runs_menu();
         else if (c == "4") loadsave_menu(cfg);
+        else if (c == "h" || c == "?") show_help();
         else if (c == "q") break;
     }
     std::puts("\nBye.");

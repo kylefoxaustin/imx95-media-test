@@ -60,6 +60,17 @@ Then drive the menu (it mirrors the screenshots above):
    quit), or **Ctrl-C** to stop gracefully. Either way you get a per-workload +
    DDR **run report**.
 
+Press **`h`** at the main menu any time for a built-in, paginated quick-help
+screen (it pauses between pages rather than scrolling off):
+
+![built-in help](docs/images/help.png)
+
+**Detached runs** let the harness run in the background while the terminal stays
+free — start one with **Run → 4**, then list and stop them from **main menu →
+Detached runs** (by number, or `a` for all; no shell needed):
+
+![managing detached runs](docs/images/detached.png)
+
 On real hardware the experience is identical — you just build with the real
 backends (see **Running on an i.MX95** below).
 
