@@ -2,6 +2,7 @@
 #include "runner.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <memory>
+#include <signal.h>  // kill()
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -25,6 +27,9 @@ using Clock = std::chrono::steady_clock;
 
 // Set by SIGINT/SIGTERM. Async-signal-safe: a plain atomic store.
 std::atomic<bool> g_interrupted{false};
+
+// Detached runs launched this session (for in-app listing / stopping).
+std::vector<DetachedRun> g_detached;
 
 void on_signal(int) { g_interrupted.store(true); }
 
@@ -260,6 +265,7 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops, bool headless
         go.store(true);  // release any workers still waiting at the barrier
         for (auto& th : threads) th.join();
         ddr->shutdown();
+        if (g_interrupted.load()) std::printf("\nStopped during startup — no work ran.\n\n");
         return g_interrupted.load() ? RunOutcome::Stopped : RunOutcome::Completed;
     }
 
@@ -395,14 +401,25 @@ bool run_detached(const Config& cfg, uint64_t target_loops, const std::string& l
     }
 
     ::close(fd);
+    g_detached.push_back({static_cast<long>(pid), cfg.summary(), logpath, target_loops == 0});
     std::printf("\nDetached run started — PID %d, logging to: %s\n", static_cast<int>(pid),
                 logpath.c_str());
     if (target_loops == 0)
-        std::printf("  continuous; stop it with:  kill %d\n", static_cast<int>(pid));
+        std::printf("  continuous; stop it from the main menu (Detached runs) or:  kill %d\n",
+                    static_cast<int>(pid));
     else
         std::printf("  will finish on its own; watch with:  tail -f %s\n", logpath.c_str());
     std::printf("\n");
     return true;
 }
+
+std::vector<DetachedRun> detached_runs() { return g_detached; }
+
+bool detached_alive(long pid) {
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
+    return errno == EPERM;  // exists but we can't signal it
+}
+
+void stop_detached(long pid) { ::kill(static_cast<pid_t>(pid), SIGTERM); }
 
 } // namespace imx95

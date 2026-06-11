@@ -2,12 +2,21 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "config.hpp"
 
 namespace imx95 {
 
 enum class RunOutcome { Completed, Stopped, QuitApp };
+
+// A background run launched this session via run_detached().
+struct DetachedRun {
+    long pid;
+    std::string config;
+    std::string log;
+    bool continuous;
+};
 
 // target_loops == 0 means continuous (run until Ctrl-C or the space-menu).
 // Builds workloads from cfg, runs them in parallel, tears everything down
@@ -25,6 +34,12 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops, bool headless
 // the child PID. Stop a continuous detached run with `kill <pid>`.
 bool run_detached(const Config& cfg, uint64_t target_loops, const std::string& logpath,
                   std::string& err);
+
+// Detached runs launched this session, and helpers to manage them in-app so the
+// user never has to drop to a shell to stop one.
+std::vector<DetachedRun> detached_runs();
+bool detached_alive(long pid);
+void stop_detached(long pid);  // sends SIGTERM (graceful stop + final report)
 
 // Installs SIGINT/SIGTERM handlers used for graceful shutdown. Call once.
 void install_signal_handlers();

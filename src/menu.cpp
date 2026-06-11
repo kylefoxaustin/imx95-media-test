@@ -144,10 +144,53 @@ void detached_run_menu(const Config& cfg) {
         }
     }
     std::string def = default_log_name();
-    std::string lp = read_line(("Log file [" + def + "] > ").c_str());
+    std::string lp = read_line(("Log file name (press Enter for " + def + ") > ").c_str());
     if (lp.empty()) lp = def;
     std::string err;
-    if (!run_detached(cfg, loops, lp, err)) std::printf("Detached run failed: %s\n", err.c_str());
+    if (run_detached(cfg, loops, lp, err))
+        std::puts("Running in the background. Manage it from the main menu -> Detached runs.");
+    else
+        std::printf("Detached run failed: %s\n", err.c_str());
+}
+
+// List the detached runs launched this session and let the user stop them
+// in-app (so there's no need to drop to a shell to `kill` a PID).
+void detached_runs_menu() {
+    for (;;) {
+        rule();
+        auto runs = detached_runs();
+        if (runs.empty()) {
+            std::puts("No detached runs launched this session.");
+            std::puts("  (Run -> 4 starts one in the background.)   b) Back");
+        } else {
+            std::puts("Detached runs launched this session:");
+            for (size_t i = 0; i < runs.size(); ++i) {
+                bool alive = detached_alive(runs[i].pid);
+                std::printf("  %zu) pid %-6ld %-7s %-8s %s   log: %s\n", i + 1, runs[i].pid,
+                            alive ? "ALIVE" : "exited",
+                            runs[i].continuous ? "(cont)" : "(finite)",
+                            runs[i].config.c_str(), runs[i].log.c_str());
+            }
+            std::puts("  enter a number to STOP that run, a) stop all, b) Back");
+        }
+        std::string c = read_line("> ");
+        if (c == "b" || c == "q") return;
+        if (c == "a") {
+            for (auto& r : runs)
+                if (detached_alive(r.pid)) stop_detached(r.pid);
+            std::puts("Sent stop to all running detached jobs (they write a final report to their log).");
+            continue;
+        }
+        try {
+            size_t idx = std::stoul(c);
+            if (idx >= 1 && idx <= runs.size()) {
+                stop_detached(runs[idx - 1].pid);
+                std::printf("Sent stop to pid %ld — it will write its final report to %s\n",
+                            runs[idx - 1].pid, runs[idx - 1].log.c_str());
+            }
+        } catch (...) {
+        }
+    }
 }
 
 // Returns true if the user chose to quit the whole app.
@@ -222,14 +265,19 @@ void run_app() {
     for (;;) {
         rule();
         std::printf("config:  %s\n", cfg.summary().c_str());
+        int active = 0;
+        for (auto& r : detached_runs())
+            if (detached_alive(r.pid)) ++active;
         std::puts("  1) Configure workloads");
         std::puts("  2) Run");
-        std::puts("  3) Load / Save config");
+        std::printf("  3) Detached runs%s\n", active ? (" (" + std::to_string(active) + " active)").c_str() : "");
+        std::puts("  4) Load / Save config");
         std::puts("  q) Quit");
         std::string c = read_line("> ");
         if (c == "1") configure_menu(cfg);
         else if (c == "2") { if (run_menu(cfg)) break; }
-        else if (c == "3") loadsave_menu(cfg);
+        else if (c == "3") detached_runs_menu();
+        else if (c == "4") loadsave_menu(cfg);
         else if (c == "q") break;
     }
     std::puts("\nBye.");

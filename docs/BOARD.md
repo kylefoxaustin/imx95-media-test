@@ -77,10 +77,15 @@ IMX95_GPU_W=3840 IMX95_GPU_H=2160 IMX95_GPU_EXTRA=192 IMX95_GPU_PASSES=2 ./imx95
 
 To run **without tying up the terminal** (e.g. while you use the board for
 something else), choose **Run → 4) Detached → log file**: it forks a background
-process that logs progress snapshots to a file. A *once*/fixed run finishes and
-writes its report to the log; a *continuous* detached run logs until you
-`kill <pid>` (printed when it starts), which makes it write the final report and
-exit. `tail -f <log>` to watch it.
+process that logs progress snapshots to a file, then drops you back at the menu —
+where you can launch a second (foreground or detached) run concurrently. At the
+log-file prompt, press **Enter** to accept the default name. A *once*/fixed run
+finishes and writes its report to the log; a *continuous* run logs until stopped.
+
+Stop a detached run from the **main menu → Detached runs** (lists each PID and
+config; pick a number to stop it, or `a` for all) — no shell needed. It can also
+be stopped from a shell with `kill <pid>` (printed when it starts). Either way it
+writes a final report to its log. `tail -f <log>` to watch.
 
 Suggested first run: **Configure** GPU mid + VPU decode 1080p + VPU encode 1080p,
 **Run → Continuous**, watch the live DDR bandwidth, then `Ctrl-C` for the report.
