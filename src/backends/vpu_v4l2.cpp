@@ -12,10 +12,8 @@
 //
 // Codec is selectable via IMX95_VPU_CODEC (h264 | hevc | fwht); device nodes are
 // auto-discovered or pinned with IMX95_VPU_{ENCODE,DECODE}_DEV. FWHT + the
-// `vicodec` test driver let the whole path be validated on a host without a VPU.
-//
-// Status: compiles against the kernel uAPI; queue/format/source-change logic is
-// written to spec and pending validation on `vicodec` (host) and i.MX95 silicon.
+// `vicodec` test driver let the whole path be validated on a host without a VPU
+// (single-planar), while the i.MX95 Wave VPU (multi-planar) uses the same code.
 
 #include <linux/videodev2.h>
 
@@ -58,10 +56,6 @@ void fill_synthetic(uint8_t* p, size_t len, uint64_t frame) {
         p[i] = static_cast<uint8_t>(base + (i * 7) + (i >> 8));
 }
 
-// Bring an encoder instance up and produce `nframes` coded frames into `out`.
-// Used both by the encode workload (out == nullptr: discard) and by the decode
-// workload's bootstrap (out != nullptr: collect). Returns the coded buffer size
-// negotiated, or 0 on failure (err set).
 struct EncSetup {
     V4l2M2m dev;
     int w = 0, h = 0;
@@ -72,32 +66,28 @@ struct EncSetup {
 bool encoder_open(EncSetup& e, VideoRes res, uint32_t coded_fourcc, std::string& err) {
     resolution(res, e.w, e.h);
     e.coded_fourcc = coded_fourcc;
-    e.coded_size = static_cast<uint32_t>(e.w) * e.h;
+    e.coded_size = static_cast<uint32_t>(e.w) * e.h * 2;  // >= any raw/compressed frame
     if (e.coded_size < (512u << 10)) e.coded_size = 512u << 10;
 
     const char* dev = env_or("IMX95_VPU_ENCODE_DEV", "");
     std::string path = *dev ? dev : V4l2M2m::find_device(V4L2_PIX_FMT_NV12, coded_fourcc);
-    if (path.empty())
-        path = V4l2M2m::find_device(0, coded_fourcc);  // any raw on OUTPUT
+    if (path.empty()) path = V4l2M2m::find_device(0, coded_fourcc);  // any raw on OUTPUT
     if (path.empty()) { err = "no V4L2 encoder device found for the requested codec"; return false; }
     if (!e.dev.open_dev(path, err)) return false;
 
-    e.raw_fourcc = e.dev.has_format(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, V4L2_PIX_FMT_NV12)
+    e.raw_fourcc = e.dev.has_format(Side::Output, V4L2_PIX_FMT_NV12)
                        ? V4L2_PIX_FMT_NV12
-                       : e.dev.first_raw_format(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+                       : e.dev.first_raw_format(Side::Output);
     if (!e.raw_fourcc) { err = "encoder OUTPUT has no raw format"; return false; }
 
-    if (!e.dev.set_format(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, coded_fourcc, e.w, e.h,
-                          e.coded_size, err))
-        return false;
-    if (!e.dev.set_format(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, e.raw_fourcc, e.w, e.h, 0, err))
-        return false;
-    if (e.dev.setup_buffers(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, kNumBuf, err) < 0) return false;
-    if (e.dev.setup_buffers(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, kNumBuf, err) < 0) return false;
-    for (int i = 0; i < e.dev.buf_count(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE); ++i)
-        if (!e.dev.qbuf(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, i, 0, err)) return false;
-    if (!e.dev.streamon(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, err)) return false;
-    if (!e.dev.streamon(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, err)) return false;
+    if (!e.dev.set_format(Side::Capture, coded_fourcc, e.w, e.h, e.coded_size, err)) return false;
+    if (!e.dev.set_format(Side::Output, e.raw_fourcc, e.w, e.h, 0, err)) return false;
+    if (e.dev.setup_buffers(Side::Output, kNumBuf, err) < 0) return false;
+    if (e.dev.setup_buffers(Side::Capture, kNumBuf, err) < 0) return false;
+    for (int i = 0; i < e.dev.buf_count(Side::Capture); ++i)
+        if (!e.dev.qbuf(Side::Capture, i, 0, err)) return false;
+    if (!e.dev.streamon(Side::Output, err)) return false;
+    if (!e.dev.streamon(Side::Capture, err)) return false;
     return true;
 }
 
@@ -114,48 +104,47 @@ public:
 
     bool init(std::string& err) override {
         if (!encoder_open(e_, res_, codec_, err)) return false;
-        // Prime: fill + queue every OUTPUT (raw) buffer.
-        auto t = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-        for (int i = 0; i < e_.dev.buf_count(t); ++i) {
-            auto& b = e_.dev.buf(t, i);
-            fill_synthetic(static_cast<uint8_t*>(b.plane.start), b.plane.length, frame_++);
-            if (!e_.dev.qbuf(t, i, static_cast<uint32_t>(b.plane.length), err)) return false;
+        for (int i = 0; i < e_.dev.buf_count(Side::Output); ++i) {  // prime raw inputs
+            auto& b = e_.dev.buf(Side::Output, i);
+            fill_synthetic(static_cast<uint8_t*>(b.start), b.length, frame_++);
+            if (!e_.dev.qbuf(Side::Output, i, static_cast<uint32_t>(b.length), err)) return false;
         }
         stats_.alloc.store(static_cast<uint64_t>(e_.w) * e_.h * 3 / 2 * kNumBuf);
         return true;
     }
 
     bool step() override { return encode_one(nullptr); }
-    void shutdown() override { e_.dev.streamoff(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
-                               e_.dev.streamoff(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-                               e_.dev.close_dev(); }
+
+    void shutdown() override {
+        e_.dev.streamoff(Side::Output);
+        e_.dev.streamoff(Side::Capture);
+        e_.dev.close_dev();
+    }
 
     // Produce one coded frame. If sink != null, append a copy of it.
     bool encode_one(std::vector<std::vector<uint8_t>>* sink) {
-        const auto OUT = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-        const auto CAP = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         std::string err;
         for (int guard = 0; guard < 256; ++guard) {
             bool cap, out, ev;
             if (!e_.dev.wait(1000, cap, out, ev)) return false;
             if (out) {
                 uint32_t used;
-                int idx = e_.dev.dqbuf(OUT, used, err);
+                int idx = e_.dev.dqbuf(Side::Output, used, err);
                 if (idx >= 0) {
-                    auto& b = e_.dev.buf(OUT, idx);
-                    fill_synthetic(static_cast<uint8_t*>(b.plane.start), b.plane.length, frame_++);
-                    e_.dev.qbuf(OUT, idx, static_cast<uint32_t>(b.plane.length), err);
+                    auto& b = e_.dev.buf(Side::Output, idx);
+                    fill_synthetic(static_cast<uint8_t*>(b.start), b.length, frame_++);
+                    e_.dev.qbuf(Side::Output, idx, static_cast<uint32_t>(b.length), err);
                 }
             }
             if (cap) {
                 uint32_t used = 0;
-                int idx = e_.dev.dqbuf(CAP, used, err);
+                int idx = e_.dev.dqbuf(Side::Capture, used, err);
                 if (idx >= 0) {
                     if (sink) {
-                        auto* p = static_cast<uint8_t*>(e_.dev.buf(CAP, idx).plane.start);
+                        auto* p = static_cast<uint8_t*>(e_.dev.buf(Side::Capture, idx).start);
                         sink->emplace_back(p, p + used);
                     }
-                    e_.dev.qbuf(CAP, idx, 0, err);
+                    e_.dev.qbuf(Side::Capture, idx, 0, err);
                     stats_.frames.fetch_add(1, std::memory_order_relaxed);
                     stats_.bytes.fetch_add(used, std::memory_order_relaxed);
                     uint64_t raw = static_cast<uint64_t>(e_.w) * e_.h * 3 / 2;
@@ -207,24 +196,22 @@ public:
         if (path.empty()) { err = "no V4L2 decoder device found for the requested codec"; return false; }
         if (!dev_.open_dev(path, err)) return false;
 
-        const auto OUT = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-        if (!dev_.set_format(OUT, codec_, w_, h_, coded_size_, err)) return false;
+        if (!dev_.set_format(Side::Output, codec_, w_, h_, coded_size_, err)) return false;
         if (!dev_.subscribe_source_change(err)) return false;
-        if (dev_.setup_buffers(OUT, kNumBuf, err) < 0) return false;
-        if (!dev_.streamon(OUT, err)) return false;
+        if (dev_.setup_buffers(Side::Output, kNumBuf, err) < 0) return false;
+        if (!dev_.streamon(Side::Output, err)) return false;
 
-        // Feed coded frames until the driver signals the resolution.
-        for (int i = 0; i < dev_.buf_count(OUT); ++i) feed_coded(OUT, i);
+        // Feed coded frames until the driver signals the capture resolution.
+        for (int i = 0; i < dev_.buf_count(Side::Output); ++i) feed_coded(i);
         for (int guard = 0; guard < 512 && !cap_ready_; ++guard) {
             bool cap, out, ev;
             if (!dev_.wait(1000, cap, out, ev)) return false;
-            if (ev && dev_.dqevent() == V4L2_EVENT_SOURCE_CHANGE) {
+            if (ev && dev_.dqevent() == V4L2_EVENT_SOURCE_CHANGE)
                 if (!start_capture(err)) return false;
-            }
             if (out) {
                 uint32_t used;
-                int idx = dev_.dqbuf(OUT, used, err);
-                if (idx >= 0) feed_coded(OUT, idx);
+                int idx = dev_.dqbuf(Side::Output, used, err);
+                if (idx >= 0) feed_coded(idx);
             }
         }
         if (!cap_ready_) { err = "decoder never signalled SOURCE_CHANGE"; return false; }
@@ -233,8 +220,6 @@ public:
     }
 
     bool step() override {
-        const auto OUT = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-        const auto CAP = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         std::string err;
         for (int guard = 0; guard < 256; ++guard) {
             bool cap, out, ev;
@@ -242,14 +227,14 @@ public:
             if (ev) dev_.dqevent();  // drain (e.g. EOS); resolution already known
             if (out) {
                 uint32_t used;
-                int idx = dev_.dqbuf(OUT, used, err);
-                if (idx >= 0) feed_coded(OUT, idx);
+                int idx = dev_.dqbuf(Side::Output, used, err);
+                if (idx >= 0) feed_coded(idx);
             }
             if (cap) {
                 uint32_t used = 0;
-                int idx = dev_.dqbuf(CAP, used, err);
+                int idx = dev_.dqbuf(Side::Capture, used, err);
                 if (idx >= 0) {
-                    dev_.qbuf(CAP, idx, 0, err);
+                    dev_.qbuf(Side::Capture, idx, 0, err);
                     stats_.frames.fetch_add(1, std::memory_order_relaxed);
                     uint64_t raw = static_cast<uint64_t>(w_) * h_ * 3 / 2;
                     stats_.bytes.fetch_add(raw, std::memory_order_relaxed);
@@ -262,30 +247,29 @@ public:
     }
 
     void shutdown() override {
-        dev_.streamoff(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
-        dev_.streamoff(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+        dev_.streamoff(Side::Output);
+        dev_.streamoff(Side::Capture);
         dev_.close_dev();
     }
 
 private:
-    void feed_coded(uint32_t type, int idx) {
+    void feed_coded(int idx) {
         std::string err;
         const auto& src = coded_[coded_idx_];
         coded_idx_ = (coded_idx_ + 1) % coded_.size();
-        auto& b = dev_.buf(type, idx);
-        size_t n = src.size() < b.plane.length ? src.size() : b.plane.length;
-        std::memcpy(b.plane.start, src.data(), n);
-        dev_.qbuf(type, idx, static_cast<uint32_t>(n), err);
+        auto& b = dev_.buf(Side::Output, idx);
+        size_t n = src.size() < b.length ? src.size() : b.length;
+        std::memcpy(b.start, src.data(), n);
+        dev_.qbuf(Side::Output, idx, static_cast<uint32_t>(n), err);
     }
 
     bool start_capture(std::string& err) {
-        const auto CAP = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         uint32_t sz;
-        if (!dev_.get_format(CAP, w_, h_, sz, err)) return false;
-        if (dev_.setup_buffers(CAP, kNumBuf, err) < 0) return false;
-        for (int i = 0; i < dev_.buf_count(CAP); ++i)
-            if (!dev_.qbuf(CAP, i, 0, err)) return false;
-        if (!dev_.streamon(CAP, err)) return false;
+        if (!dev_.get_format(Side::Capture, w_, h_, sz, err)) return false;
+        if (dev_.setup_buffers(Side::Capture, kNumBuf, err) < 0) return false;
+        for (int i = 0; i < dev_.buf_count(Side::Capture); ++i)
+            if (!dev_.qbuf(Side::Capture, i, 0, err)) return false;
+        if (!dev_.streamon(Side::Capture, err)) return false;
         cap_ready_ = true;
         return true;
     }

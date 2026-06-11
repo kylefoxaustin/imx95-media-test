@@ -21,7 +21,7 @@ expose cross-block interference.
 > | Subsystem | `mock` | real |
 > |-----------|:------:|------|
 > | GPU | ✅ | ✅ `gles` — EGL + GLES2, builds & runs on host Mesa **and** i.MX95 Mali |
-> | VPU | ✅ | 🔬 `v4l2` — V4L2 mem2mem decode/encode; compiles, pending `vicodec`/board validation |
+> | VPU | ✅ | ✅ `v4l2` — V4L2 mem2mem decode/encode; validated on `vicodec` (host), single- + multi-planar, pending board |
 > | DDR | ✅ | ⏳ `pmu` (i.MX9 DDR perf counters) |
 >
 > Mock backends run anywhere (host, CI, `qemu-imx95`, which has no GPU/VPU). The

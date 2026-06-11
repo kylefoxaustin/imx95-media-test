@@ -79,13 +79,14 @@ the terminal on the way out even when a caught signal triggered the stop.
    (resolution × subdivisions × instances × lights × fragment ALU), rendered to
    an offscreen FBO with `glFinish()` per frame. Portable across host Mesa and
    i.MX95 Mali; validated on host (low ~4000 fps, mid ~235 fps on an iGPU).
-3. **(in progress)** VPU real backend (`-DIMX95_VPU=v4l2`) — V4L2 stateful
-   `mem2mem`: encode feeds synthetic raw frames and dequeues coded; decode
-   bootstraps a bitstream into memory (a throwaway encode) and loops it through
-   the decoder, handling the `SOURCE_CHANGE` event. Self-sourcing, so no media
-   uploads. Codec selectable (`IMX95_VPU_CODEC=h264|hevc|fwht`); FWHT + the
-   `vicodec` driver validate the path on a host. Compiles + fails gracefully
-   with no device; **pending** functional validation on `vicodec` and silicon.
+3. **(done, host-validated)** VPU real backend (`-DIMX95_VPU=v4l2`) — V4L2
+   stateful `mem2mem`: encode feeds synthetic raw frames and dequeues coded;
+   decode bootstraps a bitstream into memory (a throwaway encode) and loops it
+   through the decoder, handling the `SOURCE_CHANGE` event. Self-sourcing, so no
+   media uploads. Codec selectable (`IMX95_VPU_CODEC=h264|hevc|fwht`); supports
+   both single-planar (vicodec) and multi-planar (i.MX95 Wave) APIs from the
+   same code. Validated end-to-end on `vicodec` (FWHT): encode, decode, and
+   GPU+decode+encode in parallel all clean. Pending silicon for H.264/HEVC.
 4. **DDR real backend** — `perf_event_open` on the i.MX9 DDR PMU; convert
    read/write transaction counts × burst size to bytes.
 5. **Camera as a "victim" workload** — reuse the i.MX95 ISI V4L2 capture path so
