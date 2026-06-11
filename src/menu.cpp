@@ -38,9 +38,9 @@ void pick_gpu(Config& cfg) {
         rule();
         std::printf("GPU workload   selected: %s        (b = back & save)\n", to_string(cfg.gpu));
         std::puts("  1) off");
-        std::puts("  2) low   (720p, low poly, 1 light)");
-        std::puts("  3) mid   (1080p, mid poly, few lights)");
-        std::puts("  4) max   (4k, high poly, many lights, heavy shaders)");
+        std::puts("  2) low   (light load)");
+        std::puts("  3) mid   (moderate load)");
+        std::puts("  4) max   (heavy - pegs the GPU; tune with IMX95_GPU_* env vars)");
         std::string c = read_line("> ");
         if (c == "1") cfg.gpu = GpuLevel::Off;
         else if (c == "2") cfg.gpu = GpuLevel::Low;

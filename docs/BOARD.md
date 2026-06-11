@@ -59,6 +59,15 @@ IMX95_VPU_ENCODE_DEV=/dev/videoN ./imx95-test   # pin nodes if auto-discovery mi
 IMX95_VPU_DECODE_DEV=/dev/videoM
 ```
 
+GPU levels default to Mali-G310-appropriate loads. Tune any field live without
+rebuilding (overrides the selected level):
+
+```sh
+# push "max" toward a true peg (4K, heavier shader):
+IMX95_GPU_W=3840 IMX95_GPU_H=2160 IMX95_GPU_EXTRA=192 IMX95_GPU_PASSES=2 ./imx95-test
+# knobs: IMX95_GPU_{W,H,SUBDIV,INSTANCES,LIGHTS,EXTRA,PASSES}
+```
+
 Suggested first run: **Configure** GPU mid + VPU decode 1080p + VPU encode 1080p,
 **Run → Continuous**, watch the live DDR bandwidth, then `Ctrl-C` for the report.
 Then re-run a single block alone and compare the DDR numbers — that delta is the

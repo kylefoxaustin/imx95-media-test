@@ -248,12 +248,30 @@ struct Params {
 };
 
 Params params_for(GpuLevel lvl) {
+    // Defaults calibrated for the i.MX95's entry-class Mali-G310 (not a desktop
+    // GPU). "max" is heavy enough to peg the GPU while still producing frames;
+    // override any field below to push harder (e.g. 4K) or adapt to other HW.
+    Params p;
     switch (lvl) {
-        case GpuLevel::Low: return {1280,  720, 16,  1, 1,   0, 1};
-        case GpuLevel::Mid: return {1920, 1080, 48,  8, 4,  32, 1};
-        case GpuLevel::Max: return {3840, 2160, 96, 24, 8, 192, 2};
-        default:            return {1280,  720, 16,  1, 1,   0, 1};
+        case GpuLevel::Low: p = {1280,  720, 16,  1, 1,  0, 1}; break;
+        case GpuLevel::Mid: p = {1280,  720, 48,  6, 4, 32, 1}; break;
+        case GpuLevel::Max: p = {1920, 1080, 64, 12, 6, 96, 1}; break;
+        default:            p = {1280,  720, 16,  1, 1,  0, 1}; break;
     }
+    auto ov = [](const char* k, int& v) {
+        if (const char* s = std::getenv(k)) { int x = std::atoi(s); if (x > 0) v = x; }
+    };
+    ov("IMX95_GPU_W", p.w);
+    ov("IMX95_GPU_H", p.h);
+    ov("IMX95_GPU_SUBDIV", p.subdiv);
+    ov("IMX95_GPU_INSTANCES", p.instances);
+    ov("IMX95_GPU_LIGHTS", p.lights);
+    ov("IMX95_GPU_EXTRA", p.extra);
+    ov("IMX95_GPU_PASSES", p.passes);
+    if (p.subdiv > 96) p.subdiv = 96;  // ushort index buffer
+    if (p.lights > kMaxLights) p.lights = kMaxLights;
+    if (p.extra > kMaxExtra) p.extra = kMaxExtra;
+    return p;
 }
 
 GLuint compile(GLenum type, const char* src, std::string& err) {
