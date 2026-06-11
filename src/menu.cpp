@@ -2,6 +2,7 @@
 #include "menu.hpp"
 
 #include <cstdio>
+#include <ctime>
 #include <iostream>
 #include <string>
 
@@ -97,6 +98,58 @@ void list_selected(const Config& cfg) {
     if (cfg.enc != VideoRes::Off) std::printf("  - VPU encode %s\n", to_string(cfg.enc));
 }
 
+// Prompt for a loop count; returns the count, or -1 if the user backed out.
+long ask_loop_count() {
+    for (;;) {
+        std::string s = read_line("How many loops? (number, b = back) > ");
+        if (s == "b" || s == "q" || s.empty()) return -1;
+        try {
+            long n = std::stol(s);
+            if (n > 0) return n;
+        } catch (...) {
+        }
+        std::puts("Please enter a positive number, or b to go back.");
+    }
+}
+
+std::string default_log_name() {
+    std::time_t t = std::time(nullptr);
+    std::tm tmv{};
+    localtime_r(&t, &tmv);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "imx95-run-%Y%m%d-%H%M%S.log", &tmv);
+    return buf;
+}
+
+// Configure a detached background run that logs to a file, then launch it.
+void detached_run_menu(const Config& cfg) {
+    uint64_t loops = 0;
+    for (;;) {
+        rule();
+        std::puts("Detached run - runs in the background, logs to a file (terminal stays free)");
+        std::puts("  1) Continuous   (stop later with: kill <pid>)");
+        std::puts("  2) Once");
+        std::puts("  3) Fixed count...");
+        std::puts("  b) Back");
+        std::string c = read_line("> ");
+        if (c == "1") { loops = 0; break; }
+        else if (c == "2") { loops = 1; break; }
+        else if (c == "3") {
+            long n = ask_loop_count();
+            if (n < 0) continue;
+            loops = static_cast<uint64_t>(n);
+            break;
+        } else if (c == "b" || c == "q") {
+            return;
+        }
+    }
+    std::string def = default_log_name();
+    std::string lp = read_line(("Log file [" + def + "] > ").c_str());
+    if (lp.empty()) lp = def;
+    std::string err;
+    if (!run_detached(cfg, loops, lp, err)) std::printf("Detached run failed: %s\n", err.c_str());
+}
+
 // Returns true if the user chose to quit the whole app.
 bool ask_fixed_count_and_run(const Config& cfg) {
     for (;;) {
@@ -124,11 +177,13 @@ bool run_menu(const Config& cfg) {
         std::puts("  1) Continuous (until Ctrl-C / space-menu quit)");
         std::puts("  2) Once (each workload one full pass)");
         std::puts("  3) Fixed count...");
+        std::puts("  4) Detached -> log file (runs in background, terminal stays free)");
         std::string c = read_line("> ");
         RunOutcome out = RunOutcome::Completed;
         if (c == "1") out = run_workloads(cfg, 0);
         else if (c == "2") out = run_workloads(cfg, 1);
         else if (c == "3") { if (ask_fixed_count_and_run(cfg)) return true; else continue; }
+        else if (c == "4") { detached_run_menu(cfg); return false; }
         else if (c == "b" || c == "q") return false;
         else continue;
         if (out == RunOutcome::QuitApp) return true;

@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <csignal>
+#include <fcntl.h>
 #include <memory>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "backend.hpp"
@@ -174,14 +176,34 @@ void print_report(const Tracks& tracks, double elapsed,
     std::printf("====================\n\n");
 }
 
+// One plain-text progress line for headless/detached runs (greppable log).
+void log_snapshot(const Tracks& tracks, double elapsed, const std::vector<double>& fps,
+                  double ddr_bps) {
+    int mm = static_cast<int>(elapsed) / 60, ss = static_cast<int>(elapsed) % 60;
+    std::printf("[t=%02d:%02d]", mm, ss);
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        const Track* tk = tracks[i].get();
+        uint64_t f = tk->w->stats()->frames.load(std::memory_order_relaxed);
+        if (tk->finished.load(std::memory_order_acquire))
+            std::printf(" | %s done %lluf", tk->w->stats()->name.c_str(),
+                        static_cast<unsigned long long>(f));
+        else
+            std::printf(" | %s %.1ffps %lluf", tk->w->stats()->name.c_str(), fps[i],
+                        static_cast<unsigned long long>(f));
+    }
+    std::printf(" | DDR %.2f GB/s\n", ddr_bps / 1e9);
+    std::fflush(stdout);
+}
+
 } // namespace
 
 void install_signal_handlers() {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGCHLD, SIG_IGN);  // auto-reap detached background runs
 }
 
-RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
+RunOutcome run_workloads(const Config& cfg, uint64_t target_loops, bool headless) {
     // Build the configured workloads + the DDR monitor.
     std::vector<std::unique_ptr<Workload>> loads;
     if (cfg.gpu != GpuLevel::Off) loads.push_back(make_gpu_workload(cfg.gpu));
@@ -247,7 +269,35 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
     go.store(true, std::memory_order_release);
 
     RunOutcome outcome = RunOutcome::Completed;
-    {
+    if (headless) {
+        // No TTY: log a snapshot line every ~2 s (plus one at completion/stop).
+        auto win_t0 = Clock::now();
+        std::vector<uint64_t> win_frames(tracks.size(), 0);
+        std::vector<double> fps(tracks.size(), 0.0);
+        DdrSample win_ddr = base;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            bool interrupted = g_interrupted.load();
+            bool done = running.load(std::memory_order_relaxed) == 0;
+            auto now = Clock::now();
+            double w = std::chrono::duration<double>(now - win_t0).count();
+            if (w >= 2.0 || done || interrupted) {
+                DdrSample cur = ddr->sample();
+                for (size_t i = 0; i < tracks.size(); ++i) {
+                    uint64_t f = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
+                    fps[i] = w > 0 ? (f - win_frames[i]) / w : 0.0;
+                    win_frames[i] = f;
+                }
+                double moved = (cur.read_bytes + cur.write_bytes) -
+                               (win_ddr.read_bytes + win_ddr.write_bytes);
+                win_ddr = cur;
+                win_t0 = now;
+                log_snapshot(tracks, secs_since(t0), fps, w > 0 ? moved / w : 0.0);
+            }
+            if (interrupted) { outcome = RunOutcome::Stopped; break; }
+            if (done) { outcome = RunOutcome::Completed; break; }
+        }
+    } else {
         RawMode raw;
         term_clear();
         auto last = Clock::now();
@@ -318,6 +368,41 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
 
     print_report(tracks, elapsed, moved, target_loops, outcome);
     return outcome;
+}
+
+bool run_detached(const Config& cfg, uint64_t target_loops, const std::string& logpath,
+                  std::string& err) {
+    int fd = ::open(logpath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) { err = "cannot open log file: " + logpath; return false; }
+
+    std::fflush(nullptr);  // don't let the child inherit buffered parent output
+    pid_t pid = fork();
+    if (pid < 0) { ::close(fd); err = "fork failed"; return false; }
+
+    if (pid == 0) {
+        setsid();  // own session: detached from the terminal, survives parent's Ctrl-C
+        int nul = ::open("/dev/null", O_RDONLY);
+        if (nul >= 0) { dup2(nul, STDIN_FILENO); ::close(nul); }
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        ::close(fd);
+        std::printf("==== imx95-media-test detached run (pid %d), config %s ====\n",
+                    static_cast<int>(getpid()), cfg.summary().c_str());
+        std::fflush(stdout);
+        run_workloads(cfg, target_loops, /*headless*/ true);
+        std::fflush(stdout);
+        _exit(0);
+    }
+
+    ::close(fd);
+    std::printf("\nDetached run started — PID %d, logging to: %s\n", static_cast<int>(pid),
+                logpath.c_str());
+    if (target_loops == 0)
+        std::printf("  continuous; stop it with:  kill %d\n", static_cast<int>(pid));
+    else
+        std::printf("  will finish on its own; watch with:  tail -f %s\n", logpath.c_str());
+    std::printf("\n");
+    return true;
 }
 
 } // namespace imx95

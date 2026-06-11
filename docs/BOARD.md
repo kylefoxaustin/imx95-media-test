@@ -75,6 +75,13 @@ IMX95_GPU_W=3840 IMX95_GPU_H=2160 IMX95_GPU_EXTRA=192 IMX95_GPU_PASSES=2 ./imx95
 # knobs: IMX95_GPU_{W,H,SUBDIV,INSTANCES,LIGHTS,EXTRA,PASSES}
 ```
 
+To run **without tying up the terminal** (e.g. while you use the board for
+something else), choose **Run → 4) Detached → log file**: it forks a background
+process that logs progress snapshots to a file. A *once*/fixed run finishes and
+writes its report to the log; a *continuous* detached run logs until you
+`kill <pid>` (printed when it starts), which makes it write the final report and
+exit. `tail -f <log>` to watch it.
+
 Suggested first run: **Configure** GPU mid + VPU decode 1080p + VPU encode 1080p,
 **Run → Continuous**, watch the live DDR bandwidth, then `Ctrl-C` for the report.
 Then re-run a single block alone and compare the DDR numbers — that delta is the

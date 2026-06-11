@@ -54,7 +54,8 @@ Then drive the menu (it mirrors the screenshots above):
 2. `1` → GPU → `3` (mid) → `b`. Then `2` → VPU decode → `3` (1080p) → `b`. Then
    `b` back to the main menu. Selections apply instantly and are always shown;
    `b` goes back everywhere — no dead ends.
-3. `2` → **Run** → `1` continuous (or `2` once, `3` a fixed loop count).
+3. `2` → **Run** → `1` continuous, `2` once, `3` a fixed loop count, or `4`
+   **detached → log file** (runs in the background so the terminal stays free).
 4. Watch the live dashboard. Press **space** for a menu (resume / stop & report /
    quit), or **Ctrl-C** to stop gracefully. Either way you get a per-workload +
    DDR **run report**.
