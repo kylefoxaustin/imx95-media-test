@@ -55,10 +55,13 @@ else()
 endif()
 
 # --- DDR ---------------------------------------------------------------------
-if(IMX95_DDR STREQUAL "mock")
+if(IMX95_DDR STREQUAL "pmu")
+  # i.MX9 DDR PMU via perf_event_open: kernel uAPI only, no libraries.
+  target_sources(imx95-test PRIVATE src/backends/ddr_pmu.cpp)
+elseif(IMX95_DDR STREQUAL "mock")
   target_sources(imx95-test PRIVATE src/backends/ddr_mock.cpp)
 else()
-  message(FATAL_ERROR "IMX95_DDR backend '${IMX95_DDR}' not implemented yet (use 'mock')")
+  message(FATAL_ERROR "IMX95_DDR must be 'mock' or 'pmu' (got '${IMX95_DDR}')")
 endif()
 
 message(STATUS "Backends:  gpu=${IMX95_GPU}  vpu=${IMX95_VPU}  ddr=${IMX95_DDR}")

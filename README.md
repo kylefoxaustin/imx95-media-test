@@ -22,7 +22,7 @@ expose cross-block interference.
 > |-----------|:------:|------|
 > | GPU | ✅ | ✅ `gles` — EGL + GLES2, builds & runs on host Mesa **and** i.MX95 Mali |
 > | VPU | ✅ | ✅ `v4l2` — V4L2 mem2mem decode/encode; validated on `vicodec` (host), single- + multi-planar, pending board |
-> | DDR | ✅ | ⏳ `pmu` (i.MX9 DDR perf counters) |
+> | DDR | ✅ | ✅ `pmu` — i.MX9 DDR perf counters via `perf_event_open`; host falls back to the estimate bus, pending board |
 >
 > Mock backends run anywhere (host, CI, `qemu-imx95`, which has no GPU/VPU). The
 > GLES backend is *real* and portable, so the GPU code path is validated on a
@@ -114,6 +114,19 @@ IMX95_VPU_CODEC=fwht ./build-vpu/imx95-test  # vicodec uses the FWHT codec
 On the i.MX95 use the default `IMX95_VPU_CODEC=h264` (or `hevc`). Device nodes
 are auto-discovered; pin them with `IMX95_VPU_ENCODE_DEV` / `IMX95_VPU_DECODE_DEV`
 if needed.
+
+### DDR bandwidth (`-DIMX95_DDR=pmu`)
+
+Reads the i.MX9 DDR performance monitor (`fsl_imx9_ddr_perf`, sysfs `imx9_ddr0`)
+via `perf_event_open`, summing the read/write **beat** counters
+(`eddrtq_pm_rd_beat_filt*` / `..._wr_beat_filt` on i.MX95). Notes:
+
+- Needs permission for system PMU events (run as root, or
+  `perf_event_paranoid <= 0`). If the PMU is missing or denied, it transparently
+  falls back to the estimate bus, so the build runs anywhere.
+- Bytes = beats × `IMX95_DDR_BEAT_BYTES` (default **32** — confirm against the
+  i.MX95 reference manual and adjust if needed).
+- Override discovery with `IMX95_DDR_PMU=imx9_ddr0`.
 
 ## Deploying to a board
 

@@ -51,6 +51,7 @@ struct Track {
     std::atomic<bool> inited{false};
     bool ok = false;
     std::string err;
+    double active = 0;  // seconds this workload actually ran (set by its worker)
 };
 
 void worker(Track* t, uint64_t target_loops, std::atomic<bool>* stop, std::atomic<bool>* go,
@@ -63,12 +64,14 @@ void worker(Track* t, uint64_t target_loops, std::atomic<bool>* stop, std::atomi
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     const uint64_t fpl = t->w->frames_per_loop();
+    auto wstart = Clock::now();
     while (!stop->load(std::memory_order_relaxed)) {
         if (!t->w->step()) break;
         if (target_loops && fpl &&
             t->w->stats()->frames.load(std::memory_order_relaxed) >= target_loops * fpl)
             break;
     }
+    t->active = std::chrono::duration<double>(Clock::now() - wstart).count();
     t->w->shutdown();
     running->fetch_sub(1, std::memory_order_relaxed);
 }
@@ -145,7 +148,8 @@ void print_report(const Tracks& tracks, double elapsed,
         auto* s = t->w->stats();
         uint64_t frames = s->frames.load();
         uint64_t bytes = s->bytes.load();
-        double avg_fps = elapsed > 0 ? frames / elapsed : 0.0;
+        double dur = t->active > 0 ? t->active : elapsed;  // workload's own active time
+        double avg_fps = dur > 0 ? frames / dur : 0.0;
         std::printf("  %-10s frames %10llu   avg %7.1f fps   moved %s   footprint %s\n",
                     s->name.c_str(), static_cast<unsigned long long>(frames), avg_fps,
                     fmt_bytes_gb(bytes).c_str(), fmt_bytes_gb(s->alloc.load()).c_str());

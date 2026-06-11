@@ -24,8 +24,9 @@ src/
     gpu_gles.cpp    real EGL/GLES2 GPU             (-DIMX95_GPU=gles)
     vpu_mock.cpp    mock decode + encode           (-DIMX95_VPU=mock, default)
     ddr_mock.cpp    mock DDR monitor               (-DIMX95_DDR=mock, default)
-    vpu_v4l2.cpp    real V4L2 mem2mem codec        (-DIMX95_VPU=v4l2)   (todo)
-    ddr_pmu.cpp     real i.MX9 DDR PMU monitor     (-DIMX95_DDR=pmu)    (todo)
+    vpu_v4l2.cpp    real V4L2 mem2mem codec        (-DIMX95_VPU=v4l2)
+    v4l2_m2m.{hpp,cpp}  shared V4L2 mem2mem core (single + multi planar)
+    ddr_pmu.cpp     real i.MX9 DDR PMU monitor     (-DIMX95_DDR=pmu)
 ```
 
 Each subsystem is selected independently at build time; exactly one source per
@@ -87,8 +88,12 @@ the terminal on the way out even when a caught signal triggered the stop.
    both single-planar (vicodec) and multi-planar (i.MX95 Wave) APIs from the
    same code. Validated end-to-end on `vicodec` (FWHT): encode, decode, and
    GPU+decode+encode in parallel all clean. Pending silicon for H.264/HEVC.
-4. **DDR real backend** — `perf_event_open` on the i.MX9 DDR PMU; convert
-   read/write transaction counts × burst size to bytes.
+4. **(done, host-validated)** DDR real backend (`-DIMX95_DDR=pmu`) —
+   `perf_event_open` on the i.MX9 DDR PMU (`imx9_ddr0`). Discovers the PMU + its
+   beat events from sysfs (so it adapts to i.MX93 vs i.MX95), sums read/write
+   beat counters, bytes = beats × `IMX95_DDR_BEAT_BYTES` (default 32). Falls back
+   to the estimate bus when the PMU is absent/denied. Verified on host (clean
+   fallback); pending board for real counter values + beat-size confirmation.
 5. **Camera as a "victim" workload** — reuse the i.MX95 ISI V4L2 capture path so
    you can watch capture fps degrade under GPU/VPU load (the camera-flow
    question stated in the brief).
