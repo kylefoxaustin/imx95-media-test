@@ -18,9 +18,21 @@ src/
   stats.hpp         WorkStats (atomic live counters) + DdrSample
   backend.hpp       Workload / DdrMonitor interfaces + factory declarations
   runner.{hpp,cpp}  parallel run engine, live dashboard, signals, report
-  backends_mock.cpp host/qemu backends (simulated)         [IMX95_TARGET=OFF]
-  backends_real_*.cpp  real GLES / V4L2 / DDR-PMU backends  [IMX95_TARGET=ON]  (todo)
+  backends/
+    traffic_estimate.{hpp,cpp}  shared estimated-DDR bus (always compiled)
+    gpu_mock.cpp    mock GPU                       (-DIMX95_GPU=mock, default)
+    gpu_gles.cpp    real EGL/GLES2 GPU             (-DIMX95_GPU=gles)
+    vpu_mock.cpp    mock decode + encode           (-DIMX95_VPU=mock, default)
+    ddr_mock.cpp    mock DDR monitor               (-DIMX95_DDR=mock, default)
+    vpu_v4l2.cpp    real V4L2 mem2mem codec        (-DIMX95_VPU=v4l2)   (todo)
+    ddr_pmu.cpp     real i.MX9 DDR PMU monitor     (-DIMX95_DDR=pmu)    (todo)
 ```
+
+Each subsystem is selected independently at build time; exactly one source per
+subsystem is compiled, each providing that subsystem's factory plus its
+`*_backend_name()`. Backends that cannot measure their own memory traffic feed
+the **traffic-estimate bus**, which the mock DDR monitor reports; the real PMU
+monitor reads hardware counters and ignores the bus.
 
 ## Key interfaces
 
@@ -62,9 +74,11 @@ the terminal on the way out even when a caught signal triggered the stop.
 
 1. **(done)** Interactive CLI, parallel run engine, dashboard, graceful
    shutdown, stats, mock backends, host/qemu build.
-2. **GPU real backend** — EGL (surfaceless/DRM) + GLES2/3 procedural scene with
-   `low/mid/max` knobs (resolution, instance count, lights, shader length).
-   Frame counter is exact; report GPU fps.
+2. **(done)** GPU real backend (`-DIMX95_GPU=gles`) — headless EGL (surfaceless
+   + pbuffer fallback) + GLES2 procedural sphere scene with `low/mid/max` knobs
+   (resolution × subdivisions × instances × lights × fragment ALU), rendered to
+   an offscreen FBO with `glFinish()` per frame. Portable across host Mesa and
+   i.MX95 Mali; validated on host (low ~4000 fps, mid ~235 fps on an iGPU).
 3. **VPU real backend** — V4L2 `mem2mem`: decode (feed Big Buck Bunny bitstream,
    dequeue frames, loop the clip) and encode (feed raw YUV, dequeue bitstream).
    Exact frame counts and bitrate.

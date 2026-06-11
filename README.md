@@ -14,12 +14,19 @@ You pick some heavy workloads, run them together (or alone), and at the end you
 get per-workload throughput plus the **global DDR memory-traffic** numbers that
 expose cross-block interference.
 
-> **Status:** early scaffold. The full interactive CLI, parallel run engine,
-> live dashboard, graceful shutdown, and stats reporting work today against
-> **mock backends**, so the UX and plumbing are usable and testable on any Linux
-> host (and under `qemu-imx95`, which has no GPU/VPU). The **real** i.MX95
-> backends (GLES renderer, V4L2 codec, DDR PMU) are the next milestone and slot
-> in behind the same interfaces.
+> **Status:** the full interactive CLI, parallel run engine, live dashboard,
+> graceful shutdown, and stats reporting work today. Each subsystem's backend is
+> selected independently at build time:
+>
+> | Subsystem | `mock` | real |
+> |-----------|:------:|------|
+> | GPU | ✅ | ✅ `gles` — EGL + GLES2, builds & runs on host Mesa **and** i.MX95 Mali |
+> | VPU | ✅ | ⏳ `v4l2` (next) |
+> | DDR | ✅ | ⏳ `pmu` (i.MX9 DDR perf counters) |
+>
+> Mock backends run anywhere (host, CI, `qemu-imx95`, which has no GPU/VPU). The
+> GLES backend is *real* and portable, so the GPU code path is validated on a
+> dev host before it ever touches silicon.
 
 ## What it exercises
 
@@ -54,7 +61,7 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the architecture and roadmap.
 
 ## Build
 
-Host build (mock backends — runs anywhere, including under qemu-imx95):
+All-mock build (runs anywhere, including under qemu-imx95):
 
 ```sh
 cmake -S . -B build
@@ -62,8 +69,18 @@ cmake --build build -j
 ./build/imx95-test
 ```
 
-Target build (real i.MX95 backends) — *not yet implemented*; will cross-compile
-against the Yocto BSP sysroot with `-DIMX95_TARGET=ON`.
+Pick real backends per subsystem with `-DIMX95_GPU=`, `-DIMX95_VPU=`,
+`-DIMX95_DDR=`. The GLES GPU backend needs `egl` + `glesv2` (Mesa on a host;
+the Mali libs on an i.MX95 image) and runs headless:
+
+```sh
+cmake -S . -B build-gles -DIMX95_GPU=gles   # real GPU, mock VPU/DDR
+cmake --build build-gles -j
+./build-gles/imx95-test
+```
+
+For an i.MX95 target, configure with the Yocto BSP toolchain file and the same
+`-DIMX95_GPU=gles` (plus `-DIMX95_VPU=v4l2 -DIMX95_DDR=pmu` once those land).
 
 ## Using it
 

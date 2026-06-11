@@ -157,7 +157,8 @@ void loadsave_menu(Config& cfg) {
 void run_app() {
     install_signal_handlers();
     Config cfg;
-    std::printf("\n== i.MX95 Media Test Framework ==   (backend: %s)\n", backend_name());
+    std::printf("\n== i.MX95 Media Test Framework ==   (backends: gpu:%s vpu:%s ddr:%s)\n",
+                gpu_backend_name(), vpu_backend_name(), ddr_backend_name());
 
     for (;;) {
         rule();

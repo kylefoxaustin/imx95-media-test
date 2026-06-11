@@ -121,8 +121,9 @@ char pause_overlay() {
 void print_report(const std::vector<Track>& tracks, double elapsed,
                   const DdrSample& ddr, uint64_t target_loops, RunOutcome outcome) {
     std::printf("\n==== Run report ====\n");
-    std::printf("backend: %s   mode: %s   elapsed: %.2f s   ended: %s\n",
-                backend_name(), mode_str(target_loops), elapsed,
+    std::printf("backends: gpu:%s vpu:%s ddr:%s   mode: %s   elapsed: %.2f s   ended: %s\n",
+                gpu_backend_name(), vpu_backend_name(), ddr_backend_name(),
+                mode_str(target_loops), elapsed,
                 outcome == RunOutcome::Completed ? "completed"
                 : outcome == RunOutcome::QuitApp ? "quit"
                                                  : "stopped");

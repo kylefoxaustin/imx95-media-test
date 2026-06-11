@@ -49,6 +49,10 @@ std::unique_ptr<Workload>   make_decode_workload(VideoRes res);
 std::unique_ptr<Workload>   make_encode_workload(VideoRes res);
 std::unique_ptr<DdrMonitor> make_ddr_monitor();
 
-const char* backend_name();  // "mock" | "real"
+// Each subsystem is selected independently at build time, so report them
+// separately, e.g. "gpu:gles  vpu:mock  ddr:mock".
+const char* gpu_backend_name();
+const char* vpu_backend_name();
+const char* ddr_backend_name();
 
 } // namespace imx95
