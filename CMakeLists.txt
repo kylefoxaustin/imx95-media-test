@@ -32,12 +32,11 @@ target_link_libraries(imx95-test PRIVATE Threads::Threads)
 
 # --- GPU ---------------------------------------------------------------------
 if(IMX95_GPU STREQUAL "gles")
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(EGL REQUIRED egl)
-  pkg_check_modules(GLES2 REQUIRED glesv2)
+  # EGL/GLES are dlopen'd at runtime (see gpu_gles.cpp), so we link only libdl
+  # and need just the Khronos headers at build time — no Mali libs, which lets
+  # this cross-compile without a BSP sysroot.
   target_sources(imx95-test PRIVATE src/backends/gpu_gles.cpp)
-  target_include_directories(imx95-test PRIVATE ${EGL_INCLUDE_DIRS} ${GLES2_INCLUDE_DIRS})
-  target_link_libraries(imx95-test PRIVATE ${EGL_LIBRARIES} ${GLES2_LIBRARIES})
+  target_link_libraries(imx95-test PRIVATE ${CMAKE_DL_LIBS})
 elseif(IMX95_GPU STREQUAL "mock")
   target_sources(imx95-test PRIVATE src/backends/gpu_mock.cpp)
 else()

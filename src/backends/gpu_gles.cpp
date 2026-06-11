@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,113 @@
 namespace imx95 {
 
 namespace {
+
+// EGL/GLES are dlopen'd at runtime rather than linked: the Mali userspace driver
+// is a vendor blob present on any i.MX95 BSP image, so the binary depends on no
+// GPU libraries at build time and can be cross-compiled without a BSP sysroot.
+// We resolve the exact functions used below from libEGL.so / libGLESv2.so and
+// (further down) redirect the gl*/egl* names to the loaded pointers, so the
+// rendering code reads as normal GL.
+#define IMX95_EGL_FUNCS(X) \
+    X(eglQueryString) X(eglGetProcAddress) X(eglGetDisplay) X(eglInitialize) \
+    X(eglBindAPI) X(eglChooseConfig) X(eglCreateContext) X(eglCreatePbufferSurface) \
+    X(eglMakeCurrent) X(eglDestroyContext) X(eglDestroySurface) X(eglTerminate)
+#define IMX95_GL_FUNCS(X) \
+    X(glGetError) X(glCreateShader) X(glShaderSource) X(glCompileShader) X(glGetShaderiv) \
+    X(glGetShaderInfoLog) X(glDeleteShader) X(glCreateProgram) X(glAttachShader) \
+    X(glBindAttribLocation) X(glLinkProgram) X(glGetProgramiv) X(glGetProgramInfoLog) \
+    X(glGetUniformLocation) X(glGenTextures) X(glBindTexture) X(glTexImage2D) \
+    X(glTexParameteri) X(glGenRenderbuffers) X(glBindRenderbuffer) X(glRenderbufferStorage) \
+    X(glGenFramebuffers) X(glBindFramebuffer) X(glFramebufferTexture2D) \
+    X(glFramebufferRenderbuffer) X(glCheckFramebufferStatus) X(glGenBuffers) X(glBindBuffer) \
+    X(glBufferData) X(glViewport) X(glEnable) X(glClearColor) X(glClear) X(glUseProgram) \
+    X(glEnableVertexAttribArray) X(glVertexAttribPointer) X(glUniform3fv) X(glUniform1i) \
+    X(glUniformMatrix4fv) X(glDrawElements) X(glFinish) X(glReadPixels)
+
+#define IMX95_DECL(name) decltype(&::name) name##_p = nullptr;
+IMX95_EGL_FUNCS(IMX95_DECL)
+IMX95_GL_FUNCS(IMX95_DECL)
+#undef IMX95_DECL
+
+void* g_hEGL = nullptr;
+void* g_hGL = nullptr;
+
+bool load_gpu_libs(std::string& err) {
+    if (g_hEGL && g_hGL) return true;
+    if (!g_hEGL) g_hEGL = dlopen("libEGL.so.1", RTLD_NOW | RTLD_GLOBAL);
+    if (!g_hEGL) g_hEGL = dlopen("libEGL.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!g_hEGL) { err = std::string("dlopen libEGL: ") + dlerror(); return false; }
+    if (!g_hGL) g_hGL = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_GLOBAL);
+    if (!g_hGL) g_hGL = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!g_hGL) { err = std::string("dlopen libGLESv2: ") + dlerror(); return false; }
+#define IMX95_LOAD(handle, name) \
+    name##_p = reinterpret_cast<decltype(name##_p)>(dlsym(handle, #name)); \
+    if (!name##_p) { err = std::string("missing symbol ") + #name; return false; }
+#define IMX95_LOAD_E(name) IMX95_LOAD(g_hEGL, name)
+#define IMX95_LOAD_G(name) IMX95_LOAD(g_hGL, name)
+    IMX95_EGL_FUNCS(IMX95_LOAD_E)
+    IMX95_GL_FUNCS(IMX95_LOAD_G)
+#undef IMX95_LOAD
+#undef IMX95_LOAD_E
+#undef IMX95_LOAD_G
+    return true;
+}
+
+// From here down, gl*/egl* calls go through the loaded function pointers.
+#define eglQueryString eglQueryString_p
+#define eglGetProcAddress eglGetProcAddress_p
+#define eglGetDisplay eglGetDisplay_p
+#define eglInitialize eglInitialize_p
+#define eglBindAPI eglBindAPI_p
+#define eglChooseConfig eglChooseConfig_p
+#define eglCreateContext eglCreateContext_p
+#define eglCreatePbufferSurface eglCreatePbufferSurface_p
+#define eglMakeCurrent eglMakeCurrent_p
+#define eglDestroyContext eglDestroyContext_p
+#define eglDestroySurface eglDestroySurface_p
+#define eglTerminate eglTerminate_p
+#define glGetError glGetError_p
+#define glCreateShader glCreateShader_p
+#define glShaderSource glShaderSource_p
+#define glCompileShader glCompileShader_p
+#define glGetShaderiv glGetShaderiv_p
+#define glGetShaderInfoLog glGetShaderInfoLog_p
+#define glDeleteShader glDeleteShader_p
+#define glCreateProgram glCreateProgram_p
+#define glAttachShader glAttachShader_p
+#define glBindAttribLocation glBindAttribLocation_p
+#define glLinkProgram glLinkProgram_p
+#define glGetProgramiv glGetProgramiv_p
+#define glGetProgramInfoLog glGetProgramInfoLog_p
+#define glGetUniformLocation glGetUniformLocation_p
+#define glGenTextures glGenTextures_p
+#define glBindTexture glBindTexture_p
+#define glTexImage2D glTexImage2D_p
+#define glTexParameteri glTexParameteri_p
+#define glGenRenderbuffers glGenRenderbuffers_p
+#define glBindRenderbuffer glBindRenderbuffer_p
+#define glRenderbufferStorage glRenderbufferStorage_p
+#define glGenFramebuffers glGenFramebuffers_p
+#define glBindFramebuffer glBindFramebuffer_p
+#define glFramebufferTexture2D glFramebufferTexture2D_p
+#define glFramebufferRenderbuffer glFramebufferRenderbuffer_p
+#define glCheckFramebufferStatus glCheckFramebufferStatus_p
+#define glGenBuffers glGenBuffers_p
+#define glBindBuffer glBindBuffer_p
+#define glBufferData glBufferData_p
+#define glViewport glViewport_p
+#define glEnable glEnable_p
+#define glClearColor glClearColor_p
+#define glClear glClear_p
+#define glUseProgram glUseProgram_p
+#define glEnableVertexAttribArray glEnableVertexAttribArray_p
+#define glVertexAttribPointer glVertexAttribPointer_p
+#define glUniform3fv glUniform3fv_p
+#define glUniform1i glUniform1i_p
+#define glUniformMatrix4fv glUniformMatrix4fv_p
+#define glDrawElements glDrawElements_p
+#define glFinish glFinish_p
+#define glReadPixels glReadPixels_p
 
 constexpr int kMaxLights = 8;
 constexpr int kMaxExtra = 256;
@@ -166,6 +274,7 @@ public:
     uint64_t frames_per_loop() const override { return 600; }
 
     bool init(std::string& err) override {
+        if (!load_gpu_libs(err)) return false;
         if (!init_egl(err)) return false;
         if (!init_gl(err)) { shutdown(); return false; }
         // FBO color texture + depth + (a few) buffers.

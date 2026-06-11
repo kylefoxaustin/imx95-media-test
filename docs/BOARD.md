@@ -29,12 +29,21 @@ cmake -S . -B build -DIMX95_GPU=gles -DIMX95_VPU=v4l2 -DIMX95_DDR=pmu
 cmake --build build -j
 ```
 
-### C. Generic aarch64 cross (no SDK)
+### C. Generic aarch64 cross, no SDK (produces an upload-and-run binary)
 
-Possible but fragile: Ubuntu's `aarch64-linux-gnu-g++` has no Mali libs (the GLES
-backend would need to `dlopen` them instead of linking — not yet wired) and its
-glibc may be newer than the board's. Prefer A or B. Ask if you need this path
-and it can be added.
+Works with just Ubuntu's `gcc-aarch64-linux-gnu` — no BSP sysroot needed —
+because the GLES backend `dlopen`s the Mali libs at runtime (so nothing GPU is
+linked) and the VPU/DDR backends use only kernel uAPI. `libstdc++`/`libgcc` are
+linked statically; the binary needs only `libc`/`libm` (GLIBC ≤ 2.34, so it runs
+on the i.MX95 BSP's newer glibc).
+
+```sh
+cmake -S . -B build-aarch64 -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-linux-gnu.cmake \
+      -DIMX95_GPU=gles -DIMX95_VPU=v4l2 -DIMX95_DDR=pmu
+cmake --build build-aarch64 -j
+aarch64-linux-gnu-strip build-aarch64/imx95-test   # ~1.1 MB
+# -> upload build-aarch64/imx95-test to the board and run it
+```
 
 ## Run
 
