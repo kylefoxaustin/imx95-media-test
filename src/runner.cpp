@@ -42,24 +42,38 @@ std::string fmt_rate_gbs(double bytes_per_s) {
     return buf;
 }
 
-void worker(Workload* w, uint64_t target_loops, std::atomic<bool>* stop,
-            std::atomic<int>* running) {
-    const uint64_t fpl = w->frames_per_loop();
-    while (!stop->load(std::memory_order_relaxed)) {
-        if (!w->step()) break;
-        if (target_loops && fpl &&
-            w->stats()->frames.load(std::memory_order_relaxed) >= target_loops * fpl) {
-            break;
-        }
-    }
-    running->fetch_sub(1, std::memory_order_relaxed);
-}
-
-// Per-workload bookkeeping for fps deltas.
+// Per-workload state. init()/step()/shutdown() ALL run on this worker's own
+// thread because some backends (notably EGL/GLES) bind resources to the
+// creating thread — doing init() elsewhere makes every later GPU call a no-op.
 struct Track {
     Workload* w;
     uint64_t last_frames = 0;
+    std::atomic<bool> inited{false};
+    bool ok = false;
+    std::string err;
 };
+
+void worker(Track* t, uint64_t target_loops, std::atomic<bool>* stop, std::atomic<bool>* go,
+            std::atomic<int>* running) {
+    t->ok = t->w->init(t->err);
+    t->inited.store(true, std::memory_order_release);
+    if (!t->ok) { running->fetch_sub(1, std::memory_order_relaxed); return; }
+
+    while (!go->load(std::memory_order_acquire) && !stop->load(std::memory_order_relaxed))
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    const uint64_t fpl = t->w->frames_per_loop();
+    while (!stop->load(std::memory_order_relaxed)) {
+        if (!t->w->step()) break;
+        if (target_loops && fpl &&
+            t->w->stats()->frames.load(std::memory_order_relaxed) >= target_loops * fpl)
+            break;
+    }
+    t->w->shutdown();
+    running->fetch_sub(1, std::memory_order_relaxed);
+}
+
+using Tracks = std::vector<std::unique_ptr<Track>>;
 
 const char* mode_str(uint64_t target_loops) {
     static std::string s;
@@ -70,7 +84,7 @@ const char* mode_str(uint64_t target_loops) {
 }
 
 // Draws the dashboard once. Returns the lines already cleared via home cursor.
-void draw(const std::vector<Track>& tracks, double elapsed,
+void draw(const Tracks& tracks, double elapsed,
           const std::vector<double>& fps, double ddr_r_bps, double ddr_w_bps,
           const DdrSample& ddr_total, uint64_t target_loops) {
     term_home();
@@ -84,8 +98,8 @@ void draw(const std::vector<Track>& tracks, double elapsed,
     std::printf("\n");
 
     for (size_t i = 0; i < tracks.size(); ++i) {
-        uint64_t frames = tracks[i].w->stats()->frames.load(std::memory_order_relaxed);
-        std::printf("  %-10s %8.1f fps   frames %10llu", tracks[i].w->stats()->name.c_str(),
+        uint64_t frames = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
+        std::printf("  %-10s %8.1f fps   frames %10llu", tracks[i]->w->stats()->name.c_str(),
                     fps[i], static_cast<unsigned long long>(frames));
         term_clear_to_eol();
         std::printf("\n");
@@ -118,7 +132,7 @@ char pause_overlay() {
     }
 }
 
-void print_report(const std::vector<Track>& tracks, double elapsed,
+void print_report(const Tracks& tracks, double elapsed,
                   const DdrSample& ddr, uint64_t target_loops, RunOutcome outcome) {
     std::printf("\n==== Run report ====\n");
     std::printf("backends: gpu:%s vpu:%s ddr:%s   mode: %s   elapsed: %.2f s   ended: %s\n",
@@ -128,7 +142,7 @@ void print_report(const std::vector<Track>& tracks, double elapsed,
                 : outcome == RunOutcome::QuitApp ? "quit"
                                                  : "stopped");
     for (const auto& t : tracks) {
-        auto* s = t.w->stats();
+        auto* s = t->w->stats();
         uint64_t frames = s->frames.load();
         uint64_t bytes = s->bytes.load();
         double avg_fps = elapsed > 0 ? frames / elapsed : 0.0;
@@ -168,27 +182,53 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
     if (!ddr->init(err)) {
         std::printf("DDR monitor unavailable (%s) — continuing without it.\n", err.c_str());
     }
-    for (auto& w : loads) {
-        if (!w->init(err)) {
-            std::printf("Failed to init %s: %s\n", w->stats()->name.c_str(), err.c_str());
-            for (auto& u : loads) u->shutdown();
-            ddr->shutdown();
-            return RunOutcome::Completed;
-        }
-    }
 
     g_interrupted.store(false);
     std::atomic<bool> stop{false};
+    std::atomic<bool> go{false};
     std::atomic<int> running{static_cast<int>(loads.size())};
     std::vector<std::thread> threads;
-    std::vector<Track> tracks;
-    for (auto& w : loads) tracks.push_back(Track{w.get(), 0});
+    Tracks tracks;
+    for (auto& w : loads) {
+        tracks.push_back(std::make_unique<Track>());
+        tracks.back()->w = w.get();
+    }
 
+    // Each worker init()s on its own thread (resource-ownership correctness),
+    // then waits at the `go` barrier. Acquiring real GPU/VPU resources (and the
+    // decoder's in-memory bootstrap) can take a moment, so say so.
+    std::printf("Preparing workloads...\n");
+    std::fflush(stdout);
+    for (auto& t : tracks)
+        threads.emplace_back(worker, t.get(), target_loops, &stop, &go, &running);
+
+    for (;;) {
+        bool all = true;
+        for (auto& t : tracks)
+            if (!t->inited.load(std::memory_order_acquire)) all = false;
+        if (all) break;
+        if (g_interrupted.load()) { stop.store(true); break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    bool any_fail = false;
+    for (auto& t : tracks)
+        if (t->inited.load() && !t->ok) {
+            std::printf("Failed to init %s: %s\n", t->w->stats()->name.c_str(), t->err.c_str());
+            any_fail = true;
+        }
+    if (any_fail || g_interrupted.load()) {
+        stop.store(true);
+        go.store(true);  // release any workers still waiting at the barrier
+        for (auto& th : threads) th.join();
+        ddr->shutdown();
+        return g_interrupted.load() ? RunOutcome::Stopped : RunOutcome::Completed;
+    }
+
+    // All up: start the clock and release the workers together.
     auto t0 = Clock::now();
     DdrSample base = ddr->sample();
-    for (auto& w : loads) {
-        threads.emplace_back(worker, w.get(), target_loops, &stop, &running);
-    }
+    go.store(true, std::memory_order_release);
 
     RunOutcome outcome = RunOutcome::Completed;
     {
@@ -207,7 +247,7 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
             DdrSample cur = ddr->sample();
 
             for (size_t i = 0; i < tracks.size(); ++i) {
-                uint64_t f = tracks[i].w->stats()->frames.load(std::memory_order_relaxed);
+                uint64_t f = tracks[i]->w->stats()->frames.load(std::memory_order_relaxed);
                 if (dt > 0) fps[i] = (f - last_frames[i]) / dt;
                 last_frames[i] = f;
             }
@@ -247,8 +287,7 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops) {
     DdrSample moved{end.read_bytes - base.read_bytes, end.write_bytes - base.write_bytes};
     double elapsed = secs_since(t0);
 
-    for (auto& w : loads) w->shutdown();
-    ddr->shutdown();
+    ddr->shutdown();  // workloads shut themselves down on their own threads
 
     print_report(tracks, elapsed, moved, target_loops, outcome);
     return outcome;

@@ -11,6 +11,8 @@
 // monitor reads hardware counters instead.
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -157,6 +159,7 @@ class GlesGpu : public Workload {
 public:
     explicit GlesGpu(GpuLevel lvl) : p_(params_for(lvl)) {
         stats_.name = std::string("GPU ") + to_string(lvl);
+        if (const char* d = std::getenv("IMX95_GPU_DUMP")) dump_path_ = d;
     }
 
     const char* kind() const override { return "GPU"; }
@@ -218,6 +221,14 @@ public:
             }
         }
         glFinish();  // force the GPU to actually complete the frame
+
+        // Debug: IMX95_GPU_DUMP=<path.ppm> writes one frame so the scene can be
+        // inspected. Dumped after a few frames so there's some rotation.
+        if (!dump_path_.empty() && !dumped_ &&
+            stats_.frames.load(std::memory_order_relaxed) >= 4) {
+            dump_ppm();
+            dumped_ = true;
+        }
 
         stats_.frames.fetch_add(1, std::memory_order_relaxed);
         uint64_t fb = static_cast<uint64_t>(p_.w) * p_.h * 4 * p_.passes;
@@ -337,6 +348,25 @@ private:
         return true;
     }
 
+    void dump_ppm() {
+        std::vector<uint8_t> px(static_cast<size_t>(p_.w) * p_.h * 4);
+        glReadPixels(0, 0, p_.w, p_.h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        FILE* f = std::fopen(dump_path_.c_str(), "wb");
+        if (!f) return;
+        std::fprintf(f, "P6\n%d %d\n255\n", p_.w, p_.h);
+        std::vector<uint8_t> row(static_cast<size_t>(p_.w) * 3);
+        for (int y = p_.h - 1; y >= 0; --y) {  // GL origin is bottom-left; flip
+            const uint8_t* s = &px[static_cast<size_t>(y) * p_.w * 4];
+            for (int x = 0; x < p_.w; ++x) {
+                row[x * 3] = s[x * 4];
+                row[x * 3 + 1] = s[x * 4 + 1];
+                row[x * 3 + 2] = s[x * 4 + 2];
+            }
+            std::fwrite(row.data(), 1, row.size(), f);
+        }
+        std::fclose(f);
+    }
+
     void build_sphere() {
         const int sd = p_.subdiv;
         std::vector<float> verts;
@@ -381,6 +411,8 @@ private:
     GLint uMVP_ = -1, uModel_ = -1, uNumLights_ = -1, uLightPos_ = -1, uExtra_ = -1;
     GLsizei index_count_ = 0;
     uint64_t vertex_bytes_ = 0;
+    std::string dump_path_;
+    bool dumped_ = false;
 };
 
 } // namespace
