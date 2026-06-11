@@ -15,7 +15,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include <EGL/egl.h>
@@ -24,6 +26,13 @@
 
 #include "backend.hpp"
 #include "backends/traffic_estimate.hpp"
+
+// GBM is dlopen'd for the headless DRM display path; forward-declare its opaque
+// device so we need no gbm.h at build time.
+struct gbm_device;
+#ifndef EGL_PLATFORM_GBM_KHR
+#define EGL_PLATFORM_GBM_KHR 0x31D7
+#endif
 
 namespace imx95 {
 
@@ -356,34 +365,22 @@ public:
         dpy_ = EGL_NO_DISPLAY;
         ctx_ = EGL_NO_CONTEXT;
         surf_ = EGL_NO_SURFACE;
+        if (gbm_dev_ && hGBM_)
+            if (auto destroy = reinterpret_cast<void (*)(struct gbm_device*)>(
+                    dlsym(hGBM_, "gbm_device_destroy")))
+                destroy(gbm_dev_);
+        gbm_dev_ = nullptr;
+        if (drm_fd_ >= 0) { ::close(drm_fd_); drm_fd_ = -1; }
     }
 
 private:
     bool init_egl(std::string& err) {
-        const char* cexts = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
-        if (cexts && std::strstr(cexts, "EGL_MESA_platform_surfaceless")) {
-            auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-                eglGetProcAddress("eglGetPlatformDisplayEXT"));
-            if (getPlatformDisplay)
-                dpy_ = getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY,
-                                          nullptr);
-        }
-        if (dpy_ == EGL_NO_DISPLAY) dpy_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (dpy_ == EGL_NO_DISPLAY) { err = "eglGetDisplay failed"; return false; }
-
-        EGLint major = 0, minor = 0;
-        if (!eglInitialize(dpy_, &major, &minor)) { err = "eglInitialize failed"; return false; }
+        if (!open_display(err)) return false;
         if (!eglBindAPI(EGL_OPENGL_ES_API)) { err = "eglBindAPI(ES) failed"; return false; }
 
-        const EGLint cfg_attr[] = {
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-            EGL_SURFACE_TYPE,    EGL_PBUFFER_BIT,
-            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-            EGL_DEPTH_SIZE, 16,
-            EGL_NONE};
         EGLConfig cfg;
-        EGLint n = 0;
-        if (!eglChooseConfig(dpy_, cfg_attr, &cfg, 1, &n) || n < 1) {
+        bool pbuffer_ok = false;
+        if (!choose_config(cfg, pbuffer_ok)) {
             err = "eglChooseConfig found no ES2 config";
             return false;
         }
@@ -395,6 +392,7 @@ private:
         const char* dexts = eglQueryString(dpy_, EGL_EXTENSIONS);
         bool surfaceless = dexts && std::strstr(dexts, "EGL_KHR_surfaceless_context");
         if (!surfaceless) {
+            if (!pbuffer_ok) { err = "no surfaceless context and no pbuffer config"; return false; }
             const EGLint pb[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
             surf_ = eglCreatePbufferSurface(dpy_, cfg, pb);
             if (surf_ == EGL_NO_SURFACE) { err = "eglCreatePbufferSurface failed"; return false; }
@@ -404,6 +402,86 @@ private:
             return false;
         }
         return true;
+    }
+
+    bool init_display(EGLDisplay d) {
+        if (d == EGL_NO_DISPLAY) return false;
+        EGLint a, b;
+        if (!eglInitialize(d, &a, &b)) return false;
+        dpy_ = d;
+        return true;
+    }
+
+    // Try, in order: Mesa surfaceless (dev host), GBM/DRM (headless Mali — no
+    // compositor needed), then the default display (host NVIDIA, etc.).
+    // IMX95_EGL_PLATFORM=surfaceless|gbm|default forces one.
+    bool open_display(std::string& err) {
+        const char* cexts = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+        auto gpd = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+            eglGetProcAddress("eglGetPlatformDisplayEXT"));
+        const char* force = std::getenv("IMX95_EGL_PLATFORM");
+        auto want = [&](const char* p) { return !force || !std::strcmp(force, p); };
+
+        if (want("surfaceless") && gpd && cexts &&
+            std::strstr(cexts, "EGL_MESA_platform_surfaceless") &&
+            init_display(gpd(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr)))
+            return true;
+
+        if (want("gbm") && gpd && open_gbm_display(gpd)) return true;
+
+        if (want("default") && init_display(eglGetDisplay(EGL_DEFAULT_DISPLAY))) return true;
+
+        err = "eglInitialize failed (tried surfaceless/gbm/default). For headless Mali, "
+              "ensure a DRM render node exists (/dev/dri/renderD128) and run as root; "
+              "override with IMX95_DRM_DEVICE or IMX95_EGL_PLATFORM.";
+        return false;
+    }
+
+    bool open_gbm_display(PFNEGLGETPLATFORMDISPLAYEXTPROC gpd) {
+        if (!hGBM_) hGBM_ = dlopen("libgbm.so.1", RTLD_NOW | RTLD_GLOBAL);
+        if (!hGBM_) hGBM_ = dlopen("libgbm.so", RTLD_NOW | RTLD_GLOBAL);
+        if (!hGBM_) return false;
+        auto create =
+            reinterpret_cast<struct gbm_device* (*)(int)>(dlsym(hGBM_, "gbm_create_device"));
+        if (!create) return false;
+        const char* envdev = std::getenv("IMX95_DRM_DEVICE");
+        const char* nodes[] = {(envdev && *envdev) ? envdev : nullptr, "/dev/dri/renderD128",
+                               "/dev/dri/card0"};
+        for (const char* node : nodes) {
+            if (!node) continue;
+            int fd = ::open(node, O_RDWR | O_CLOEXEC);
+            if (fd < 0) continue;
+            struct gbm_device* g = create(fd);
+            if (!g) { ::close(fd); continue; }
+            if (init_display(gpd(EGL_PLATFORM_GBM_KHR, g, nullptr))) {
+                drm_fd_ = fd;
+                gbm_dev_ = g;
+                return true;
+            }
+            if (auto destroy = reinterpret_cast<void (*)(struct gbm_device*)>(
+                    dlsym(hGBM_, "gbm_device_destroy")))
+                destroy(g);
+            ::close(fd);
+        }
+        return false;
+    }
+
+    bool choose_config(EGLConfig& cfg, bool& pbuffer_ok) {
+        auto pick = [&](EGLint surftype) {
+            const EGLint a[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                                EGL_SURFACE_TYPE,    surftype,
+                                EGL_RED_SIZE,        8,
+                                EGL_GREEN_SIZE,      8,
+                                EGL_BLUE_SIZE,       8,
+                                EGL_ALPHA_SIZE,      8,
+                                EGL_DEPTH_SIZE,      16,
+                                EGL_NONE};
+            EGLint n = 0;
+            return eglChooseConfig(dpy_, a, &cfg, 1, &n) && n >= 1;
+        };
+        if (pick(EGL_PBUFFER_BIT)) { pbuffer_ok = true; return true; }
+        pbuffer_ok = false;
+        return pick(EGL_WINDOW_BIT);  // Mali GBM configs are window-type; we use surfaceless
     }
 
     bool init_gl(std::string& err) {
@@ -522,6 +600,9 @@ private:
     uint64_t vertex_bytes_ = 0;
     std::string dump_path_;
     bool dumped_ = false;
+    int drm_fd_ = -1;
+    struct gbm_device* gbm_dev_ = nullptr;
+    void* hGBM_ = nullptr;
 };
 
 } // namespace

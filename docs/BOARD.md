@@ -66,10 +66,12 @@ cross-block interference the tool exists to measure.
 
 ## Things to watch on first bring-up (please report back)
 
-- **GPU/EGL headless:** the backend tries `EGL_MESA_platform_surfaceless` then
-  `eglGetDisplay(EGL_DEFAULT_DISPLAY)`. If EGL init fails with no compositor
-  running, the Mali build may need a GBM/DRM display path — send the exact
-  "Failed to init GPU ..." message and we'll add it.
+- **GPU/EGL headless:** the backend renders without a compositor by opening a
+  DRM node via GBM (tries `EGL_MESA_platform_surfaceless` → GBM
+  `/dev/dri/renderD128` → default display). If GPU init fails, check
+  `ls /dev/dri/` and pin the node with `IMX95_DRM_DEVICE=/dev/dri/cardN`, or
+  force a platform with `IMX95_EGL_PLATFORM=gbm|default`. (Weston does not need
+  to be running — headless GBM is independent of it.)
 - **VPU device nodes / codec:** if "no V4L2 encoder/decoder device found",
   check `ls /dev/video*` and which nodes are the Wave encoder vs decoder, then
   pin them with `IMX95_VPU_{ENCODE,DECODE}_DEV`.
