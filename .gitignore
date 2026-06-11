@@ -1,0 +1,16 @@
+# Build output
+/build/
+build*/
+*.o
+*.a
+
+# Runtime config + downloaded media assets (fetched, never committed)
+imx95-test.cfg
+/assets/clips/
+
+# Editor / OS cruft
+*.swp
+.DS_Store
+.vscode/
+.cache/
+compile_commands.json
