@@ -45,10 +45,13 @@ else()
 endif()
 
 # --- VPU ---------------------------------------------------------------------
-if(IMX95_VPU STREQUAL "mock")
+if(IMX95_VPU STREQUAL "v4l2")
+  # V4L2 mem2mem codec: just kernel ioctls, no extra libraries to link.
+  target_sources(imx95-test PRIVATE src/backends/vpu_v4l2.cpp src/backends/v4l2_m2m.cpp)
+elseif(IMX95_VPU STREQUAL "mock")
   target_sources(imx95-test PRIVATE src/backends/vpu_mock.cpp)
 else()
-  message(FATAL_ERROR "IMX95_VPU backend '${IMX95_VPU}' not implemented yet (use 'mock')")
+  message(FATAL_ERROR "IMX95_VPU must be 'mock' or 'v4l2' (got '${IMX95_VPU}')")
 endif()
 
 # --- DDR ---------------------------------------------------------------------

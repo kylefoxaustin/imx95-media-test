@@ -21,7 +21,7 @@ expose cross-block interference.
 > | Subsystem | `mock` | real |
 > |-----------|:------:|------|
 > | GPU | ✅ | ✅ `gles` — EGL + GLES2, builds & runs on host Mesa **and** i.MX95 Mali |
-> | VPU | ✅ | ⏳ `v4l2` (next) |
+> | VPU | ✅ | 🔬 `v4l2` — V4L2 mem2mem decode/encode; compiles, pending `vicodec`/board validation |
 > | DDR | ✅ | ⏳ `pmu` (i.MX9 DDR perf counters) |
 >
 > Mock backends run anywhere (host, CI, `qemu-imx95`, which has no GPU/VPU). The
@@ -80,7 +80,32 @@ cmake --build build-gles -j
 ```
 
 For an i.MX95 target, configure with the Yocto BSP toolchain file and the same
-`-DIMX95_GPU=gles` (plus `-DIMX95_VPU=v4l2 -DIMX95_DDR=pmu` once those land).
+`-DIMX95_GPU=gles -DIMX95_VPU=v4l2` (plus `-DIMX95_DDR=pmu` once it lands).
+
+### Testing the V4L2 codec path on a host (no VPU needed)
+
+The kernel's virtual stateful codec, `vicodec`, speaks the same V4L2 mem2mem
+uAPI as the i.MX95 Wave VPU, so the decode/encode plumbing can be exercised on a
+dev box:
+
+```sh
+sudo modprobe vicodec                       # creates /dev/videoN codec nodes
+cmake -S . -B build-vpu -DIMX95_VPU=v4l2 && cmake --build build-vpu -j
+IMX95_VPU_CODEC=fwht ./build-vpu/imx95-test  # vicodec uses the FWHT codec
+```
+
+On the i.MX95 use the default `IMX95_VPU_CODEC=h264` (or `hevc`). Device nodes
+are auto-discovered; pin them with `IMX95_VPU_ENCODE_DEV` / `IMX95_VPU_DECODE_DEV`
+if needed.
+
+## Deploying to a board
+
+The deploy artifact is just the (small) cross-built binary — **no media files**,
+because the VPU workloads are self-sourcing (encode feeds synthetic frames;
+decode bootstraps its bitstream by encoding a few frames into memory). If you do
+need to move a large file to a board with a per-upload size cap,
+`scripts/chunk.sh split <file> [MB]` produces `<=MB` parts + a manifest, and
+`scripts/chunk.sh join <file>` reassembles and sha256-verifies them on the board.
 
 ## Using it
 
