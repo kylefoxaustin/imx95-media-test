@@ -218,8 +218,24 @@ a datasheet:
 - **DDR is not the bottleneck** at these loads (~5–11 GB/s under a full mix, well
   under the LPDDR ceiling) — the VPU engine is the limiter, not memory.
 
-That cross-block insight — invisible from specs — is exactly what the harness is
-for.
+**Capstone — all four blocks maxed at once, on the hardest board.** On an
+early-walnascar `b307_2025.02.05` EVK (the one board *no* public converter quarter
+could run), a model converted via the [eIQ AI Hub](https://eiq.nxp.com/ai-hub)
+(neutron-converter **2.2.3**) drove the whole SoC flat-out — GPU `max`, **4K
+decode + 4K encode**, and NPU, simultaneously:
+
+| Block | Maxed together | Alone | Read |
+|---|---|---|---|
+| GPU `max` | 7.8 fps | ~8 fps | isolated, compute-bound |
+| DEC 4k | **43.6 fps** | ~100 fps | ↓56% — shares the Wave engine |
+| ENC 4k | **43.6 fps** | ~61 fps | ↓28% — *converges* with decode |
+| NPU | **341.5 fps** | ~353 fps | ↓3% — own engine, barely flinches |
+| DDR | **13.6 GB/s** (1.05 TB / 78 s) | — | 4K codec is the memory driver |
+
+The 4K decode and encode collapsing to the *exact same* 43.6 fps is the single
+time-sliced Wave engine, proven the hard way; the NPU holding station is Neutron's
+isolation. That cross-block insight — invisible from specs — is exactly what the
+harness is for.
 
 ## Running on an i.MX95
 
