@@ -40,15 +40,25 @@ Linux host.
 > The Neutron NPU runs a quantized TFLite model **neutron-converted with the
 > converter version that matches your board's BSP**. A *mismatched* converter
 > makes the driver segfault at model-prepare even though the delegate partitions
-> the graph — so the version pairing is what matters.
+> the graph — so the version pairing is what matters. **Same build stamp on the
+> converter and the running firmware ⇒ it works**, wherever the converter runs.
 >
-> Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
-> repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
-> firmware + driver, and the eIQ **converter SDK quarter** maps to that release's
-> date. On the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**, and a
-> MobileNet converted with `neutron_converter_SDK_25_12` runs at **~1.7 ms/inf
-> (≈32× over CPU)**. Then just `IMX95_NPU_MODEL=<that .tflite> ./imx95-test`.
-> Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
+> **Two ways to get a matching model:**
+>
+> 1. **On the board — menu `n) Prepare NPU model`** (easiest *if* the board ships
+>    a converter). The harness reads the firmware and on-board converter build
+>    stamps; if they match it converts your `.tflite` right there (one keystroke),
+>    caches it, and offers to use it. **If they don't match it refuses** and
+>    points you to route 2 — so it never converts straight into the segfault.
+> 2. **On an x86 host**, with the eIQ converter SDK quarter that matches your BSP.
+>    Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
+>    repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
+>    firmware + driver, and the converter quarter maps to that release's date. On
+>    the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
+>
+> Either way, a MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over
+> CPU)**; then just `IMX95_NPU_MODEL=<that .tflite> ./imx95-test`. Full recipe +
+> conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
 
 Also on the roadmap: an optional on-screen GPU window (currently headless).
 
@@ -62,6 +72,9 @@ Also on the roadmap: an optional on-screen GPU window (currently headless).
   stop, and a per-run **report**.
 - **Detached background runs** logged to a file and **managed in-app** (list/stop,
   no shell needed).
+- **On-target NPU model prep** (`n) Prepare NPU model`) — converts a quantized
+  `.tflite` on the board itself, **gated on a converter↔firmware build-stamp
+  match** so it can't produce microcode the driver rejects.
 - **Built-in help** (`h`, paginated) and **self-diagnostics** (`c) Check system`).
 - **Single self-contained ~24 MB binary** — `dlopen`s the platform GPU/codec libs,
   talks V4L2 directly, embeds its own test video; **cross-compiles with no BSP
@@ -106,6 +119,35 @@ you what's runnable here (and *why* something isn't) before you run anything:
 A paginated quick-help screen that pauses between pages rather than scrolling off:
 
 ![built-in help](docs/images/help.png)
+
+### Prepare an NPU model on the board: `n`
+
+The NPU needs a `.tflite` neutron-converted for *this* board's BSP. If the board
+ships its own converter, **`n) Prepare NPU model`** does it locally — and guards
+you with a build-stamp check:
+
+```text
+> n
+Prepare NPU model — convert a quantized .tflite for THIS board
+  firmware build .... b425_2025.10.xx
+  on-board converter  b425_2025.10.xx   [/usr/lib/libNeutronConverter.so]
+
+  converter MATCHES firmware -> safe to convert on this board.
+
+Input .tflite to convert (b = back) > mobilenet_v1_quant.tflite
+Will write: mobilenet_v1_quant.neutron-b425_2025.10.xx.tflite   (target 'imx95')
+Convert on this board now? [y/N] > y
+converting......... 
+Converted in 8.7 s -> mobilenet_v1_quant.neutron-b425_2025.10.xx.tflite
+Use this model for NPU runs this session? [Y/n] > y
+```
+
+If the on-board converter's stamp **doesn't** match the firmware (or there's no
+converter at all), `n` **refuses and points you to host conversion** instead of
+producing microcode the driver would reject — the version mismatch is the whole
+reason a converted model can segfault at model-prepare. `c) Check system` reports
+the same alignment up front. The converted file is cached (named with the
+firmware stamp), so a re-run reuses it instead of recompiling.
 
 ### Detached runs — launch in the background, monitor from the menu
 
@@ -152,7 +194,7 @@ backends (see **Running on an i.MX95** below).
 |-------|----------|--------|
 | **GPU** (Arm Mali-G310) | Procedural EGL/GLES scene, complexity scaled by resolution × geometry × lights × shader cost | `low` / `mid` / `max` |
 | **VPU** (Wave codec, V4L2 mem2mem) | Decode and/or encode | `720p` / `1080p` / `4k`, decode and encode independently |
-| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched converted model, see above) |
+| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched model — convert on-target via `n` or on a host, see above) |
 
 Decode and encode are independent (run both at once), but each is
 single-resolution. The GPU level is a single choice.

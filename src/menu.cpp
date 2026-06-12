@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "menu.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
 #include <sys/utsname.h>
+#include <thread>
 #include <unistd.h>
 
 #include "backend.hpp"
 #include "config.hpp"
+#include "neutron_convert.hpp"
 #include "runner.hpp"
 
 #ifndef IMX95_VERSION
@@ -218,6 +224,15 @@ bool run_menu(const Config& cfg) {
         std::puts("\nNothing configured yet — choose 1) Configure workloads first.\n");
         return false;
     }
+    if (cfg.npu) {
+        const char* m = std::getenv("IMX95_NPU_MODEL");
+        if (!m || !*m)
+            std::puts("\nNote: NPU is selected but IMX95_NPU_MODEL is unset — set it, or use "
+                      "main menu 'n) Prepare NPU model'.");
+        else if (!tflite_is_converted(m))
+            std::puts("\nNote: the NPU model isn't Neutron-converted for this board — it will run "
+                      "on CPU. Use main menu 'n) Prepare NPU model' to convert it.");
+    }
     for (;;) {
         rule();
         list_selected(cfg);
@@ -259,6 +274,143 @@ void loadsave_menu(Config& cfg) {
     }
 }
 
+bool path_exists(const std::string& p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0;
+}
+
+// Where a converted model is cached: alongside the input, stamped with the
+// firmware build so a later firmware change naturally invalidates it (new name
+// -> reconvert) instead of silently reusing mismatched microcode.
+std::string converted_cache_path(const std::string& in, const std::string& fw) {
+    std::string base = in;
+    const std::string ext = ".tflite";
+    if (base.size() > ext.size() && base.compare(base.size() - ext.size(), ext.size(), ext) == 0)
+        base = base.substr(0, base.size() - ext.size());
+    return base + ".neutron-" + (fw.empty() ? "board" : fw) + ext;
+}
+
+// Offer to use a freshly-prepared model for NPU runs this session by exporting
+// IMX95_NPU_MODEL (the NPU backend reads it; forked detached runs inherit it).
+void offer_use_model(const std::string& path) {
+    std::string use = read_line("Use this model for NPU runs this session? [Y/n] > ");
+    if (use == "n" || use == "N") return;
+    setenv("IMX95_NPU_MODEL", path.c_str(), 1);
+    std::puts("Set IMX95_NPU_MODEL for this session — Configure NPU on, then Run.");
+}
+
+// Run convertModel as a blocking call while a helper thread prints liveness
+// dots (convertModel is opaque — no real progress to report). Returns elapsed
+// seconds via `secs`.
+bool convert_with_dots(const NeutronAlign& al, const std::string& in, const std::string& out,
+                       const std::string& target, double& secs, std::string& err) {
+    std::atomic<bool> running{true};
+    std::fputs("converting", stdout);
+    std::fflush(stdout);
+    std::thread dots([&] {
+        while (running.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::fputc('.', stdout);
+            std::fflush(stdout);
+        }
+    });
+    auto t0 = std::chrono::steady_clock::now();
+    bool ok = neutron_convert_file(al.converter_lib, in, out, target, err);
+    running.store(false);
+    dots.join();
+    secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::putchar('\n');
+    return ok;
+}
+
+// "n) Prepare NPU model" — convert a quantized .tflite on THIS board, but only
+// when the board's own converter matches the running firmware (the stamp gate
+// that keeps us from converting straight into the driver's segfault).
+void prepare_npu_model() {
+    rule();
+    std::puts("Prepare NPU model — convert a quantized .tflite for THIS board");
+    NeutronAlign al = neutron_alignment();
+
+    if (al.firmware.empty() && al.converter.empty()) {
+        std::puts("No Neutron firmware or on-board converter found here.");
+        std::puts("(This step only does anything on an i.MX95 with the eIQ Neutron stack.)");
+        read_line("-- press Enter to return --");
+        return;
+    }
+    std::printf("  firmware build .... %s\n", al.firmware.empty() ? "(not found)" : al.firmware.c_str());
+
+    if (al.converter.empty()) {
+        std::puts("  on-board converter  (none found)\n");
+        std::puts("This board has no libNeutronConverter.so, so it can't convert locally.");
+        std::puts("Convert on an x86 host with the eIQ converter quarter matching the");
+        std::puts("firmware above, then pass IMX95_NPU_MODEL=<converted.tflite>. (docs/BOARD.md)");
+        read_line("-- press Enter to return --");
+        return;
+    }
+    std::printf("  on-board converter  %s\n  converter lib ..... %s\n",
+                al.converter.c_str(), al.converter_lib.c_str());
+
+    // THE GATE: refuse to convert with a converter that doesn't match firmware.
+    if (!al.matched) {
+        std::puts("\n(!!) The on-board converter does NOT match the running firmware.");
+        std::puts("Converting with it would produce microcode the driver rejects");
+        std::puts("(the segfault-at-model-prepare failure). Refusing.");
+        std::puts("Convert on an x86 host with the eIQ quarter matching the firmware build");
+        std::puts("above (e.g. lf-6.12.x_2.2.0 -> SDK 25-12). See docs/BOARD.md.");
+        read_line("-- press Enter to return --");
+        return;
+    }
+    std::puts("\n  converter MATCHES firmware -> safe to convert on this board.");
+
+    std::string defin;
+    if (const char* m = std::getenv("IMX95_NPU_MODEL")) defin = m;
+    std::string prompt = "\nInput .tflite to convert";
+    if (!defin.empty()) prompt += " (Enter for " + defin + ")";
+    prompt += " (b = back) > ";
+    std::string in = read_line(prompt.c_str());
+    if (in.empty()) in = defin;
+    if (in.empty() || in == "b" || in == "q") return;
+    if (!path_exists(in)) {
+        std::printf("Not found: %s\n", in.c_str());
+        read_line("-- press Enter to return --");
+        return;
+    }
+    if (tflite_is_converted(in)) {
+        std::printf("'%s' already contains Neutron ops — nothing to convert.\n", in.c_str());
+        offer_use_model(in);
+        read_line("-- press Enter to return --");
+        return;
+    }
+
+    std::string out = converted_cache_path(in, al.firmware);
+    if (path_exists(out) && tflite_is_converted(out)) {
+        std::printf("\nAlready converted earlier: %s\n", out.c_str());
+        offer_use_model(out);
+        read_line("-- press Enter to return --");
+        return;
+    }
+
+    std::string target = "imx95";
+    if (const char* t = std::getenv("IMX95_NPU_TARGET")) if (*t) target = t;
+    std::printf("\nWill write: %s   (target '%s')\n", out.c_str(), target.c_str());
+    std::string yn = read_line("Convert on this board now? [y/N] > ");
+    if (yn != "y" && yn != "Y") return;
+
+    double secs = 0;
+    std::string err;
+    bool ok = convert_with_dots(al, in, out, target, secs, err);
+    if (!ok) {
+        std::printf("Conversion FAILED after %.1f s: %s\n", secs, err.c_str());
+    } else if (!tflite_is_converted(out)) {
+        std::printf("Converter ran (%.1f s) but the output has no Neutron ops — the model\n"
+                    "may be unsupported by the NPU, or the converter is subtly off.\n", secs);
+    } else {
+        std::printf("Converted in %.1f s -> %s\n", secs, out.c_str());
+        offer_use_model(out);
+    }
+    read_line("-- press Enter to return --");
+}
+
 } // namespace
 
 // Preflight: probe each block and report whether this target can run it.
@@ -288,6 +440,20 @@ void check_system() {
     }
     rule();
     std::printf("%d of 4 blocks ready to run on this target.\n", runnable);
+
+    // NPU conversion picture: can we prepare a model on-target, or must it be
+    // done on a host? (Same stamp gate the 'n' action enforces.)
+    NeutronAlign al = neutron_alignment();
+    if (!al.firmware.empty() || !al.converter.empty()) {
+        if (al.converter.empty())
+            std::printf("NPU model: no on-board converter — convert on a host matching firmware %s.\n",
+                        al.firmware.empty() ? "(unknown)" : al.firmware.c_str());
+        else if (al.matched)
+            std::puts("NPU model: on-board converter MATCHES firmware — use menu 'n' to convert on target.");
+        else
+            std::printf("NPU model: converter (%s) != firmware (%s) — convert on a host (menu 'n' explains).\n",
+                        al.converter.c_str(), al.firmware.c_str());
+    }
     read_line("-- press Enter to return --");
 }
 
@@ -304,6 +470,7 @@ MAIN MENU
   2) Run         start the selected workloads
   3) Detached    view / stop runs launched in the background
   4) Load/Save   store or reload your configuration
+  n) Prepare NPU model   convert a .tflite for this board (see NPU below)
   h) Help (this screen)     q) Quit
 
 CONFIGURE
@@ -343,6 +510,12 @@ TUNING  (environment variables, set before launching the program)
   VPU      : IMX95_VPU_CODEC=h264|hevc   IMX95_VPU_STREAM=<file.h264>
   DDR      : IMX95_DDR_BEAT_BYTES=32 (confirm against the reference manual)
   GPU disp : IMX95_EGL_PLATFORM=gbm|default   IMX95_DRM_DEVICE=/dev/dri/cardN
+  NPU      : IMX95_NPU_MODEL=<neutron .tflite>   IMX95_NPU_RUNS=500
+
+NPU MODEL
+  The NPU needs a quantized .tflite neutron-converted for THIS board's BSP.
+  Menu 'n' converts one on-target when the board's converter matches its
+  firmware (it checks, and refuses a mismatch); otherwise convert on a host.
 
   Run as root so the DDR PMU and codec/GPU device nodes are accessible.)";
 
@@ -375,6 +548,7 @@ void run_app() {
         std::puts("  2) Run");
         std::printf("  3) Detached runs%s\n", active ? (" (" + std::to_string(active) + " active)").c_str() : "");
         std::puts("  4) Load / Save config");
+        std::puts("  n) Prepare NPU model (convert a .tflite for this board)");
         std::puts("  c) Check system (what can this board run?)");
         std::puts("  h) Help");
         std::puts("  q) Quit");
@@ -383,6 +557,7 @@ void run_app() {
         else if (c == "2") { if (run_menu(cfg)) break; }
         else if (c == "3") detached_runs_menu();
         else if (c == "4") loadsave_menu(cfg);
+        else if (c == "n") prepare_npu_model();
         else if (c == "c") check_system();
         else if (c == "h" || c == "?") show_help();
         else if (c == "q") break;
