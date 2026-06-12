@@ -107,23 +107,30 @@ IMX95_NPU_MODEL=/path/model_neutron.tflite ./imx95-test   # required
 # optional: IMX95_NPU_BENCH=<benchmark_model>  IMX95_NPU_DELEGATE=<.so>  IMX95_NPU_RUNS=500
 ```
 
-**Converting a model** (on an x86 host) with NXP's `neutron_converter_SDK_<qtr>`
-(from `https://eiq.nxp.com/repository`):
+**The converter version must match your board's BSP** — a mismatch makes
+`libNeutronDriver.so` segfault at model-prepare (`privateNeutronModelPrepareLegacy`)
+even though the delegate partitions the graph (`1 node delegated`). To find the
+matching converter:
+
+1. Identify your BSP release: `cat /etc/os-release` + the installed `neutron`
+   package version, or match your board to a branch of NXP's
+   [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron) repo (its firmware +
+   driver bytes match the board exactly).
+2. Map that release's date to the eIQ **converter SDK quarter**. Example: the EVK
+   here is `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
+3. Convert on an x86 host with that quarter's converter (from
+   `https://eiq.nxp.com/repository`):
 
 ```py
-import neutron_converter_SDK_25_03.neutron_converter as nc
+import neutron_converter_SDK_25_12.neutron_converter as nc   # <- the quarter that matches your BSP
 open("m_neutron.tflite","wb").write(bytes(
     nc.convertModel(list(open("m_quant.tflite","rb").read()), "imx95")))
 ```
 
-> **Critical: the converter must match the board's firmware.** The Neutron
-> firmware/driver and the converter share a microcode format; a mismatch makes
-> `libNeutronDriver.so` segfault in model-prepare (`privateNeutronModelPrepareLegacy`)
-> even though the delegate partitions the graph (`1 node delegated`). Check the
-> firmware build date with
-> `strings /lib/firmware/NeutronFirmware.elf | grep 'clang version'` and use the
-> converter from that exact eIQ release. The harness probes the model on startup
-> and fails with guidance if it doesn't execute.
+> **Verified:** on `lf-6.12.49_2.2.0`, MobileNet converted with SDK **25-12** runs
+> at **~1.7 ms/inference (≈32× over CPU)** — `1 node delegated`, `EXIT=0`. The
+> harness probes the model at startup and fails with guidance if the converter is
+> the wrong version; `c) Check system` also reports the firmware build stamp.
 
 ### Converting on the target (when the BSP ships the converter)
 

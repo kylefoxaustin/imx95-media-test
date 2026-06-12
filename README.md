@@ -21,38 +21,34 @@ bandwidth; stop any time for a final report:
 
 ![live dashboard](docs/images/dashboard.png)
 
-## Status — what works today
+## Status — all four blocks run on real i.MX95 silicon
 
-GPU, VPU, and the DDR monitor are **running on real i.MX95 silicon** (an i.MX95
-EVK). Each subsystem's backend is selected independently at build time, and a
-full **mock** build runs the entire UI on any Linux host.
+GPU, VPU, NPU, and the DDR monitor are **all validated on real i.MX95 hardware**
+(an i.MX95 EVK, `lf-6.12.49_2.2.0` BSP). Each subsystem's backend is selected
+independently at build time, and a full **mock** build runs the entire UI on any
+Linux host.
 
 | Subsystem | mock | real backend | on hardware |
 |-----------|:----:|------|------|
 | **GPU** | ✅ | `gles` — EGL + GLES2, headless via GBM (host Mesa **and** i.MX95 Mali) | ✅ working |
 | **VPU** | ✅ | `v4l2` — V4L2 mem2mem decode + encode; H.264 on the i.MX95 Wave VPU | ✅ working |
+| **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ✅ working |
 | **DDR** | ✅ | `pmu` — i.MX9 DDR perf counters via `perf_event_open` | ✅ working |
-| **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ⚠️ **see below** |
 
-> ### ⚠️ NPU inference does not run end-to-end yet
+> ### NPU: match the neutron-converter to your BSP
 >
-> The Neutron NPU is **fully wired into the harness** and the delegate **offloads
-> the model on hardware** (`1 node delegated`) — but actually *executing* it
-> currently **crashes inside NXP's Neutron driver** (`libNeutronDriver.so`,
-> segfault at model-prepare, `privateNeutronModelPrepareLegacy`).
+> The Neutron NPU runs a quantized TFLite model **neutron-converted with the
+> converter version that matches your board's BSP**. A *mismatched* converter
+> makes the driver segfault at model-prepare even though the delegate partitions
+> the graph — so the version pairing is what matters.
 >
-> **Root cause:** the neutron-converter's microcode format must match the board's
-> BSP firmware/driver *exactly*. No public converter version we tried (eIQ SDK
-> `25-03` … `26-03`) matches this early **walnascar** image (firmware stamped
-> Feb 2025), and the driver embeds no version to pin the right one. We ruled out
-> zero-copy (`NEUTRON_ENABLE_ZERO_COPY=0`, still crashes) and silicon revision
-> (rev 2.0, aligned).
->
-> **This is an NXP BSP/converter alignment issue, not a harness bug.** The NPU
-> block lights up automatically via `IMX95_NPU_MODEL=<working .tflite>` the moment
-> a board-matched model executes — **zero code changes needed.** The likely fixes
-> are a converter bundled with this exact BSP (ideally one that runs *on the
-> board*), or a newer aligned BSP image. See [`docs/BOARD.md`](docs/BOARD.md).
+> Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
+> repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
+> firmware + driver, and the eIQ **converter SDK quarter** maps to that release's
+> date. On the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**, and a
+> MobileNet converted with `neutron_converter_SDK_25_12` runs at **~1.7 ms/inf
+> (≈32× over CPU)**. Then just `IMX95_NPU_MODEL=<that .tflite> ./imx95-test`.
+> Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
 
 Also on the roadmap: an optional on-screen GPU window (currently headless).
 
@@ -111,11 +107,39 @@ A paginated quick-help screen that pauses between pages rather than scrolling of
 
 ![built-in help](docs/images/help.png)
 
-### Detached runs
+### Detached runs — launch in the background, monitor from the menu
 
-Run the harness in the background while the terminal stays free — start one with
-**Run → 4**, then list and stop them from **main menu → Detached runs** (by
-number, or `a` for all; no shell needed):
+Long soaks shouldn't tie up your terminal. A **detached** run forks into the
+background, logs to a file, and hands the menu straight back — so you can launch
+more runs (each contends on the real hardware) or just walk away.
+
+**Start one:**
+
+1. Configure your workloads — e.g. `1` GPU → `4` max → `b`, then `2` VPU decode →
+   `4` 4k → `b`, then `b`.
+2. **`2` Run → `4`** (Detached → log file).
+3. Pick a mode: `1` continuous, `2` once, or `3` a fixed count.
+4. Press **Enter** to accept the default log name (`imx95-run-<timestamp>.log`),
+   or type your own.
+
+It prints the PID + log path and drops you back at the menu:
+
+```text
+Detached run started — PID 1353, logging to: run.log
+  continuous; stop it from the main menu (Detached runs) or:  kill 1353
+```
+
+**Watch it** from a shell: `tail -f run.log` — it writes a one-line snapshot every
+~2 s and a full report when it stops:
+
+```text
+[t=00:06] | GPU max 8.0fps 49f | DEC 4k 99.5fps 612f | DDR 6.84 GB/s
+```
+
+**Monitor / stop from the menu** — main menu → **`3` Detached runs** lists every
+run you launched this session (PID, alive/exited, config, log path). Enter its
+number to stop one, or `a` to stop all — no shell, no remembering PIDs. Stopping a
+run makes it write its final report to its log and exit:
 
 ![managing detached runs](docs/images/detached.png)
 
@@ -128,7 +152,7 @@ backends (see **Running on an i.MX95** below).
 |-------|----------|--------|
 | **GPU** (Arm Mali-G310) | Procedural EGL/GLES scene, complexity scaled by resolution × geometry × lights × shader cost | `low` / `mid` / `max` |
 | **VPU** (Wave codec, V4L2 mem2mem) | Decode and/or encode | `720p` / `1080p` / `4k`, decode and encode independently |
-| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (⚠️ pending BSP-matched model, see above) |
+| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched converted model, see above) |
 
 Decode and encode are independent (run both at once), but each is
 single-resolution. The GPU level is a single choice.
@@ -162,7 +186,11 @@ a datasheet:
   and an encode together and they converge to *identical* fps (e.g. 1080p
   dec+enc → ~157/157 fps), with decode dropping ~25–50%. That's a single
   time-sliced codec engine, not independent enc/dec hardware.
-- **DDR is not the bottleneck** at these loads (~5–8 GB/s under a full mix, well
+- **The Neutron NPU is largely isolated too.** MobileNet inference holds ~554
+  inf/s under a full GPU `mid` + 1080p-decode load vs ~590 standalone (~6%, much
+  of that the harness re-launching the runner per batch) — like the GPU, a
+  separate engine that neither steals nor cedes much.
+- **DDR is not the bottleneck** at these loads (~5–11 GB/s under a full mix, well
   under the LPDDR ceiling) — the VPU engine is the limiter, not memory.
 
 That cross-block insight — invisible from specs — is exactly what the harness is

@@ -181,20 +181,23 @@ CheckResult npu_check() {
         }
         if (!conv.empty()) break;
     }
-    std::string ctx;
-    if (!fw.empty()) ctx += "  [firmware " + fw + "]";
-    if (!conv.empty()) {
-        ctx += " [converter " + conv + "]";
-        if (!fw.empty() && conv != fw) ctx += " (!!) MISMATCH - inference will crash";
-    } else {
-        ctx += " [no on-board converter]";
-    }
+    std::string fwctx;
+    if (!fw.empty()) fwctx += "  [firmware " + fw + "]";
 
     auto w = make_npu_workload();  // init() locates tools/model + probes one inference
     std::string err;
-    if (!w->init(err)) return {false, err + ctx};
-    w->shutdown();
-    return {true, "Neutron inference OK" + ctx};
+    if (w->init(err)) {
+        w->shutdown();
+        return {true, "Neutron inference OK" + fwctx};  // it runs — no version warning needed
+    }
+    // Failed: add the eIQ-alignment context that usually explains a crash —
+    // the firmware build and any (possibly mismatched) on-board converter.
+    std::string ctx = fwctx;
+    if (!conv.empty()) {
+        ctx += " [on-board converter " + conv + "]";
+        if (!fw.empty() && conv != fw) ctx += " (!!) version MISMATCH";
+    }
+    return {false, err + ctx};
 }
 
 } // namespace imx95
