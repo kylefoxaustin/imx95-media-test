@@ -226,12 +226,12 @@ bool run_menu(const Config& cfg) {
     }
     if (cfg.npu) {
         const char* m = std::getenv("IMX95_NPU_MODEL");
-        if (!m || !*m)
-            std::puts("\nNote: NPU is selected but IMX95_NPU_MODEL is unset — set it, or use "
-                      "main menu 'n) Prepare NPU model'.");
-        else if (!tflite_is_converted(m))
-            std::puts("\nNote: the NPU model isn't Neutron-converted for this board — it will run "
+        if (m && *m && !tflite_is_converted(m))
+            std::puts("\nNote: IMX95_NPU_MODEL isn't Neutron-converted for this board — it will run "
                       "on CPU. Use main menu 'n) Prepare NPU model' to convert it.");
+        else if (!m || !*m)
+            std::puts("\nNote: NPU model not pinned — the harness auto-detects a converted .tflite "
+                      "beside the binary. Else set IMX95_NPU_MODEL or use menu 'n'.");
     }
     for (;;) {
         rule();

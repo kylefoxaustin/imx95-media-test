@@ -100,10 +100,18 @@ cross-block interference the tool exists to measure.
 
 The NPU workload loops inference through the platform's `benchmark_model` + the
 Neutron delegate. It needs a quantized `.tflite` that has been **neutron-converted
-for your board**, then:
+for your board** (see the conversion routes below). Point the harness at it one
+of two ways:
 
 ```sh
-IMX95_NPU_MODEL=/path/model_neutron.tflite ./imx95-test   # required
+# A) Auto-detect: drop the converted .tflite next to the binary and just run.
+#    The harness picks the one .tflite that actually carries Neutron ops
+#    (by content, so the name is irrelevant; plain .tflite files are ignored;
+#    if several converted models are present it asks you to pin one).
+./imx95-test
+
+# B) Explicit (always wins; required if multiple converted models are present):
+IMX95_NPU_MODEL=/path/model_neutron.tflite ./imx95-test
 # optional: IMX95_NPU_BENCH=<benchmark_model>  IMX95_NPU_DELEGATE=<.so>  IMX95_NPU_RUNS=500
 ```
 

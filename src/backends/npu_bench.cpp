@@ -21,8 +21,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <glob.h>
+#include <set>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include "backend.hpp"
@@ -50,6 +53,68 @@ std::string find_benchmark() {
     return "";
 }
 
+// Directory holding the running binary (so a model uploaded *next to* it is
+// found even when the program is launched from elsewhere).
+std::string exe_dir() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    std::string p(buf);
+    size_t s = p.find_last_of('/');
+    return s == std::string::npos ? "" : p.substr(0, s);
+}
+
+// Resolve which model to run. `IMX95_NPU_MODEL` always wins (explicit path). With
+// it unset, auto-detect by CONTENT: scan the cwd and the binary's directory for
+// .tflite files that are actually neutron-converted (carry Neutron ops). This is
+// name-agnostic — rename the model freely, and plain/un-converted .tflite files
+// in the same folder are ignored. Exactly one converted model -> use it; zero or
+// several -> return "" with guidance in `err` (so multiple models stay explicit).
+// `how` describes the resolution for reporting ("IMX95_NPU_MODEL" / "auto-detected").
+std::string resolve_npu_model(std::string& how, std::string& err) {
+    if (const char* m = std::getenv("IMX95_NPU_MODEL")) {
+        if (*m) {
+            if (!file_exists(m)) { err = std::string("NPU model not found: ") + m; return ""; }
+            how = "IMX95_NPU_MODEL";
+            return m;
+        }
+    }
+    // Auto-detect: gather converted .tflite candidates from cwd + exe dir.
+    std::vector<std::string> dirs = {"."};
+    std::string ed = exe_dir();
+    if (!ed.empty() && ed != ".") dirs.push_back(ed);
+
+    std::vector<std::string> hits;
+    std::set<std::string> seen;  // dedup by canonical path (cwd may == exe dir)
+    for (const auto& d : dirs) {
+        glob_t g{};
+        if (glob((d + "/*.tflite").c_str(), 0, nullptr, &g) == 0) {
+            for (size_t i = 0; i < g.gl_pathc; ++i) {
+                std::string p = g.gl_pathv[i];
+                if (!tflite_is_converted(p)) continue;
+                char rp[4096];
+                std::string key = realpath(p.c_str(), rp) ? rp : p;
+                if (seen.insert(key).second) hits.push_back(p);
+            }
+        }
+        globfree(&g);
+    }
+    if (hits.empty()) {
+        err = "no NPU model. Upload a neutron-converted .tflite next to the binary, "
+              "or convert one with menu 'n', or set IMX95_NPU_MODEL=<path>.";
+        return "";
+    }
+    if (hits.size() > 1) {
+        std::string list;
+        for (size_t i = 0; i < hits.size(); ++i) list += (i ? ", " : "") + hits[i];
+        err = "multiple converted models found (" + list + ") — set IMX95_NPU_MODEL to pick one.";
+        return "";
+    }
+    how = "auto-detected";
+    return hits[0];
+}
+
 class BenchNpu : public Workload {
 public:
     BenchNpu() { stats_.name = "NPU"; }
@@ -59,10 +124,11 @@ public:
     bool init(std::string& err) override {
         bench_ = find_benchmark();
         if (bench_.empty()) { err = "benchmark_model not found; set IMX95_NPU_BENCH=<path>"; return false; }
-        const char* m = std::getenv("IMX95_NPU_MODEL");
-        if (!m || !*m) { err = "set IMX95_NPU_MODEL=<neutron-compiled .tflite>"; return false; }
-        model_ = m;
-        if (!file_exists(model_)) { err = "NPU model not found: " + model_; return false; }
+        std::string how;
+        model_ = resolve_npu_model(how, err);
+        if (model_.empty()) return false;  // err already set with guidance
+        if (how == "auto-detected")
+            std::fprintf(stderr, "[NPU] using auto-detected converted model: %s\n", model_.c_str());
         const char* d = std::getenv("IMX95_NPU_DELEGATE");
         delegate_ = (d && *d) ? d : "/usr/lib/libneutron_delegate.so";
         if (const char* r = std::getenv("IMX95_NPU_RUNS")) {
@@ -110,10 +176,13 @@ private:
                 if (c > count) count = c;  // the main benchmark run is the largest count
             }
         }
-        int rc = pclose(f);
-        if (count > 0) return static_cast<long>(count);
-        if (rc != 0) return -1;                       // crashed / failed, no inferences
-        return static_cast<long>(runs);               // ran but parse missed; assume requested
+        pclose(f);  // exit status is unreliable: the harness sets SIGCHLD=SIG_IGN
+                    // (auto-reaping detached runs), so pclose() returns -1/ECHILD
+                    // even on a clean exit. The inference count is the real signal.
+        // benchmark_model prints "count=N" only once inferences actually run; a
+        // converter/firmware mismatch crashes at model-prepare BEFORE any
+        // inference, so it emits no count -> we report failure.
+        return count > 0 ? static_cast<long>(count) : -1;
     }
 
     std::string bench_, model_, delegate_;
@@ -126,29 +195,48 @@ std::unique_ptr<Workload> make_npu_workload() { return std::make_unique<BenchNpu
 
 const char* npu_backend_name() { return "bench"; }
 
-CheckResult npu_check() {
-    // Surface the eIQ alignment picture: the running firmware's build, any
-    // converter present on the rootfs(es), and whether they match — a mismatch
-    // is what makes a converted model segfault the driver at execution.
-    NeutronAlign al = neutron_alignment();
-    std::string fwctx;
-    if (!al.firmware.empty()) fwctx += "  [firmware " + al.firmware + "]";
+namespace {
 
-    auto w = make_npu_workload();  // init() locates tools/model + probes one inference
-    std::string err;
-    if (w->init(err)) {
-        w->shutdown();
-        return {true, "Neutron inference OK" + fwctx};  // it runs — no version warning needed
-    }
-    // Failed: add the eIQ-alignment context that usually explains a crash —
-    // the firmware build and any (possibly mismatched) on-board converter.
-    std::string ctx = fwctx;
+// eIQ-alignment context appended to a failed NPU check: the firmware build and
+// any (possibly mismatched) on-board converter — usually the reason a model crashes.
+std::string align_context(const NeutronAlign& al) {
+    std::string ctx;
+    if (!al.firmware.empty()) ctx += "  [firmware " + al.firmware + "]";
     if (!al.converter.empty()) {
         ctx += " [on-board converter " + al.converter + "]";
         if (!al.firmware.empty() && !al.matched) ctx += " (!!) version MISMATCH";
         else if (al.matched) ctx += " — matches firmware; convert on target via menu 'n'";
     }
-    return {false, err + ctx};
+    return ctx;
+}
+
+std::string base_name(const std::string& p) {
+    size_t s = p.find_last_of('/');
+    return s == std::string::npos ? p : p.substr(s + 1);
+}
+
+}  // namespace
+
+CheckResult npu_check() {
+    NeutronAlign al = neutron_alignment();
+
+    // Which model would a run use? (explicit env, or an auto-detected converted
+    // model beside the binary). Report it so the user sees what's being probed.
+    std::string how, rerr;
+    std::string model = resolve_npu_model(how, rerr);
+    if (model.empty())
+        return {false, rerr + align_context(al)};  // no model to probe
+
+    auto w = make_npu_workload();  // init() re-resolves the same model + probes 1 inference
+    std::string err;
+    if (w->init(err)) {
+        w->shutdown();
+        std::string fwctx;
+        if (!al.firmware.empty()) fwctx = "  [firmware " + al.firmware + "]";
+        return {true, "Neutron inference OK (" + how + ": " + base_name(model) + ")" + fwctx};
+    }
+    // Model present but the probe failed — surface the likely mismatch context.
+    return {false, err + align_context(al)};
 }
 
 } // namespace imx95

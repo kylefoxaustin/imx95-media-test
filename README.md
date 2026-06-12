@@ -35,7 +35,7 @@ Linux host.
 | **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ✅ working |
 | **DDR** | ✅ | `pmu` — i.MX9 DDR perf counters via `perf_event_open` | ✅ working |
 
-> ### NPU: match the neutron-converter to your BSP
+> ### IMPORTANT: NPU — match the neutron-converter to your BSP
 >
 > The Neutron NPU runs a quantized TFLite model **neutron-converted with the
 > converter version that matches your board's BSP**. A *mismatched* converter
@@ -56,11 +56,22 @@ Linux host.
 >    firmware + driver, and the converter quarter maps to that release's date. On
 >    the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
 >
-> Either way, a MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over
-> CPU)**; then just `IMX95_NPU_MODEL=<that .tflite> ./imx95-test`. Full recipe +
-> conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
-
-Also on the roadmap: an optional on-screen GPU window (currently headless).
+> A MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over CPU)**.
+>
+> **Deploying a host-converted model — no env var, no menu step needed.** Upload
+> the converted `.tflite` into the **same directory as the binary** on the target
+> and just run it; the harness auto-detects it:
+>
+> - It scans the binary's folder (and the working directory) and picks the one
+>   `.tflite` that is **actually neutron-converted** — detected by *content*, so
+>   **the filename doesn't matter** (rename it however you like).
+> - Plain / un-converted `.tflite` files in the same folder are **ignored**.
+> - If **two or more** converted models are present it won't guess — it asks you
+>   to pin one with `IMX95_NPU_MODEL=<path>`.
+> - Setting `IMX95_NPU_MODEL=<path>` always wins if you prefer to be explicit.
+>
+> `c) Check system` shows which model it resolved and whether it actually ran.
+> Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
 
 ## Features
 
@@ -287,6 +298,16 @@ sudo modprobe vicodec                        # creates /dev/videoN codec nodes
 cmake -S . -B build-vpu -DIMX95_VPU=v4l2 && cmake --build build-vpu -j
 IMX95_VPU_CODEC=fwht ./build-vpu/imx95-test  # vicodec uses the FWHT codec
 ```
+
+### Testing the CLI
+
+`tests/menu_walkthrough.sh` builds two **ASan+UBSan** mock/bench binaries and
+drives the program through essentially every menu option — configure (all GPU
+levels + VPU resolutions + NPU toggle + clear), all run modes (once / fixed /
+continuous-via-SIGINT), detached launch/stop, load/save, help, check-system, the
+`n` model-prep paths, and NPU model resolution (auto-detect / ambiguous / none /
+explicit) — asserting no crash, abort, or sanitizer trip. Run it from the repo
+root; it exits non-zero on any failure.
 
 ### DDR bandwidth notes (`-DIMX95_DDR=pmu`)
 
