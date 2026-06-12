@@ -116,14 +116,35 @@ open("m_neutron.tflite","wb").write(bytes(
     nc.convertModel(list(open("m_quant.tflite","rb").read()), "imx95")))
 ```
 
-> **Critical: the converter version must match the board's BSP.** The Neutron
+> **Critical: the converter must match the board's firmware.** The Neutron
 > firmware/driver and the converter share a microcode format; a mismatch makes
-> `libNeutronDriver.so` crash in model-prepare (segfault) even though the
-> delegate partitions the graph. Pick the converter quarter from the firmware
-> build date: `strings /lib/firmware/NeutronFirmware.elf | grep 'clang version'`.
-> If no public converter matches an early/pre-release BSP, use the converter
-> bundled with that exact BSP release. The harness probes the model on startup
-> and fails with this guidance if it doesn't execute.
+> `libNeutronDriver.so` segfault in model-prepare (`privateNeutronModelPrepareLegacy`)
+> even though the delegate partitions the graph (`1 node delegated`). Check the
+> firmware build date with
+> `strings /lib/firmware/NeutronFirmware.elf | grep 'clang version'` and use the
+> converter from that exact eIQ release. The harness probes the model on startup
+> and fails with guidance if it doesn't execute.
+
+### Converting on the target (when the BSP ships the converter)
+
+Some BSPs include `libNeutronConverter.so` on the rootfs. Converting *on the
+board with its own converter* guarantees the microcode matches the board's
+driver — the cleanest fix for version skew. `tools/neutron-convert-on-target.cpp`
+is a tiny aarch64 helper that `dlopen`s that library and calls its
+`converter::convertModel(bytes, target)`:
+
+```sh
+aarch64-linux-gnu-g++ -O2 -o neutron-convert-on-target tools/neutron-convert-on-target.cpp -ldl
+# on the board:
+./neutron-convert-on-target --list                                  # list targets
+./neutron-convert-on-target model_quant.tflite model_neutron.tflite imx95
+```
+
+> The `--lib` flag points at the converter `.so`. **Caveat:** the converter must
+> still match the *running* firmware. On a multi-image board, a converter on a
+> second partition can belong to a different (older) eIQ release than the live
+> firmware — converting with it then still segfaults. Confirm both come from the
+> same eIQ build (compare the `clang version` build stamps).
 
 ## Things to watch on first bring-up (please report back)
 
