@@ -135,6 +135,12 @@ open("m_neutron.tflite","wb").write(bytes(
     nc.convertModel(list(open("m_quant.tflite","rb").read()), "imx95")))
 ```
 
+**Or convert online** with the [eIQ AI Hub](https://eiq.nxp.com/ai-hub) (cloud,
+NXP sign-in): *AI Toolkit → Optimize & convert → NeutronConversion*, choosing
+**Target `imx95`** and the **Flavor (version)** matching your board's BSP. Same
+rule — the flavor must match your firmware build, so verify with `c) Check system`
+after deploying. Inputs: TFLite / ONNX / PyTorch.
+
 > **Verified:** on `lf-6.12.49_2.2.0`, MobileNet converted with SDK **25-12** runs
 > at **~1.7 ms/inference (≈32× over CPU)** — `1 node delegated`, `EXIT=0`. The
 > harness probes the model at startup and fails with guidance if the converter is

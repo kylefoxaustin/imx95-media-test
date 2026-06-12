@@ -258,20 +258,26 @@ makes the driver segfault at model-prepare even though the delegate partitions
 the graph — so the version pairing is what matters. **Same build stamp on the
 converter and the running firmware ⇒ it works**, wherever the converter runs.
 
-**Two ways to get a matching model:**
+**Three ways to get a matching model:**
 
 1. **On the board — menu `n) Prepare NPU model`** (easiest *if* the board ships
    a converter). The harness reads the firmware and on-board converter build
    stamps; if they match it converts your `.tflite` right there (one keystroke),
    caches it, and offers to use it. **If they don't match it refuses** and
-   points you to route 2 — so it never converts straight into the segfault.
+   points you to another route — so it never converts straight into the segfault.
 2. **On an x86 host**, with the eIQ converter SDK quarter that matches your BSP.
    Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
    repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
    firmware + driver, and the converter quarter maps to that release's date. On
    the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
+3. **Online — [eIQ AI Hub](https://eiq.nxp.com/ai-hub) (cloud, NXP sign-in).** The
+   AI Toolkit's *Optimize & convert* runs the Neutron conversion in the browser:
+   choose **Target `imx95`** and the **Flavor (version) that matches your board's
+   BSP**, then download the converted `.tflite`. Inputs: TFLite / ONNX / PyTorch.
 
-A MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over CPU)**.
+Whichever route, the **flavor/version must match your board's firmware build** —
+deploy, then confirm with `c) Check system`. A MobileNet converted for this BSP
+runs at **~1.7 ms/inf (≈32× over CPU)**.
 
 **Deploying a host-converted model — no env var, no menu step needed.** Upload
 the converted `.tflite` into the **same directory as the binary** on the target
