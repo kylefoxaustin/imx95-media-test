@@ -393,6 +393,10 @@ bakes them into the binary, so there is still only one file to deploy.
 
 Created and maintained by **Kyle Fox** ([@kylefoxaustin](https://github.com/kylefoxaustin)).
 
+Built in close collaboration with **Claude** (Anthropic) — from the first EGL/V4L2
+plumbing through cracking the eIQ Neutron converter↔BSP puzzle and getting all four
+blocks running on real silicon. Thanks, Claude. 🤖🤝
+
 ## License
 
 BSD-3-Clause, © 2026 Kyle Fox. See [`LICENSE`](LICENSE). Bundled Big Buck Bunny
