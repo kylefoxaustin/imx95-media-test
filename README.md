@@ -32,71 +32,22 @@ Linux host.
 |-----------|:----:|------|------|
 | **GPU** | ✅ | `gles` — EGL + GLES2, headless via GBM (host Mesa **and** i.MX95 Mali) | ✅ working |
 | **VPU** | ✅ | `v4l2` — V4L2 mem2mem decode + encode; H.264 on the i.MX95 Wave VPU | ✅ working |
-| **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ✅ working |
+| **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ✅ working&nbsp;\* |
 | **DDR** | ✅ | `pmu` — i.MX9 DDR perf counters via `perf_event_open` | ✅ working |
 
-> ### IMPORTANT: NPU — match the neutron-converter to your BSP
->
-> The Neutron NPU runs a quantized TFLite model **neutron-converted with the
-> converter version that matches your board's BSP**. A *mismatched* converter
-> makes the driver segfault at model-prepare even though the delegate partitions
-> the graph — so the version pairing is what matters. **Same build stamp on the
-> converter and the running firmware ⇒ it works**, wherever the converter runs.
->
-> **Two ways to get a matching model:**
->
-> 1. **On the board — menu `n) Prepare NPU model`** (easiest *if* the board ships
->    a converter). The harness reads the firmware and on-board converter build
->    stamps; if they match it converts your `.tflite` right there (one keystroke),
->    caches it, and offers to use it. **If they don't match it refuses** and
->    points you to route 2 — so it never converts straight into the segfault.
-> 2. **On an x86 host**, with the eIQ converter SDK quarter that matches your BSP.
->    Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
->    repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
->    firmware + driver, and the converter quarter maps to that release's date. On
->    the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
->
-> A MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over CPU)**.
->
-> **Deploying a host-converted model — no env var, no menu step needed.** Upload
-> the converted `.tflite` into the **same directory as the binary** on the target
-> and just run it; the harness auto-detects it:
->
-> - It scans the binary's folder (and the working directory) and picks the one
->   `.tflite` that is **actually neutron-converted** — detected by *content*, so
->   **the filename doesn't matter** (rename it however you like).
-> - Plain / un-converted `.tflite` files in the same folder are **ignored**.
-> - If **two or more** converted models are present it won't guess — it asks you
->   to pin one with `IMX95_NPU_MODEL=<path>`.
-> - Setting `IMX95_NPU_MODEL=<path>` always wins if you prefer to be explicit.
->
-> `c) Check system` shows which model it resolved and whether it actually ran.
-> Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
-
-## Features
-
-- **Four workload blocks** — GPU (Mali/GLES), VPU (Wave decode + encode), NPU
-  (Neutron), and a global DDR-bandwidth monitor.
-- **Run alone or in parallel**, in **continuous / once / fixed-count / detached**
-  modes.
-- **Live dashboard** (per-block fps + rolling DDR), graceful `Ctrl-C`/space-menu
-  stop, and a per-run **report**.
-- **Detached background runs** logged to a file and **managed in-app** (list/stop,
-  no shell needed).
-- **On-target NPU model prep** (`n) Prepare NPU model`) — converts a quantized
-  `.tflite` on the board itself, **gated on a converter↔firmware build-stamp
-  match** so it can't produce microcode the driver rejects.
-- **Built-in help** (`h`, paginated) and **self-diagnostics** (`c) Check system`).
-- **Single self-contained ~24 MB binary** — `dlopen`s the platform GPU/codec libs,
-  talks V4L2 directly, embeds its own test video; **cross-compiles with no BSP
-  sysroot**.
-- **Full mock build** runs the whole UI on any Linux host / `qemu-imx95`.
+> **\* NPU success is BSP-dependent.** The model must be neutron-converted with the
+> converter version that **matches your board's firmware**, or the driver rejects
+> it. This is the one real gotcha on this SoC — if your NPU row comes up red, that's
+> almost always why. The full recipe (on-target *or* host conversion) is in
+> **[Running on an i.MX95 → NPU model](#npu-model-match-the-neutron-converter-to-your-bsp)**.
 
 ## Quick start — try the UI in 30 seconds (no i.MX95 needed)
 
 The all-mock build runs the complete interface anywhere. It simulates the
 workloads so you can learn the menus, run loop, and reporting before touching
 hardware.
+
+**Prerequisites:** CMake ≥ 3.16 and a C++17 compiler (`g++` or `clang`).
 
 ```sh
 git clone https://github.com/kylefoxaustin/imx95-media-test
@@ -118,6 +69,25 @@ Then drive the menu (it mirrors the screenshots above):
    quit), or **Ctrl-C** to stop gracefully. Either way you get a per-workload +
    DDR **run report**.
 
+## Features
+
+- **Four workload blocks** — GPU (Mali/GLES), VPU (Wave decode + encode), NPU
+  (Neutron), and a global DDR-bandwidth monitor.
+- **Run alone or in parallel**, in **continuous / once / fixed-count / detached**
+  modes.
+- **Live dashboard** (per-block fps + rolling DDR), graceful `Ctrl-C`/space-menu
+  stop, and a per-run **report**.
+- **Detached background runs** logged to a file and **managed in-app** (list/stop,
+  no shell needed).
+- **On-target NPU model prep** (`n) Prepare NPU model`) — converts a quantized
+  `.tflite` on the board itself, **gated on a converter↔firmware build-stamp
+  match** so it can't produce microcode the driver rejects.
+- **Built-in help** (`h`, paginated) and **self-diagnostics** (`c) Check system`).
+- **Single self-contained ~24 MB binary** — `dlopen`s the platform GPU/codec libs,
+  talks V4L2 directly, embeds its own test video; **cross-compiles with no BSP
+  sysroot**.
+- **Full mock build** runs the whole UI on any Linux host / `qemu-imx95`.
+
 ### Know your board: `c) Check system`
 
 Not sure what your target supports? Press **`c`** — it probes each block and tells
@@ -135,7 +105,9 @@ A paginated quick-help screen that pauses between pages rather than scrolling of
 
 The NPU needs a `.tflite` neutron-converted for *this* board's BSP. If the board
 ships its own converter, **`n) Prepare NPU model`** does it locally — and guards
-you with a build-stamp check:
+you with a build-stamp check (the converter-vs-BSP story is in
+[Running on an i.MX95 → NPU model](#npu-model-match-the-neutron-converter-to-your-bsp)).
+The build stamps shown below are illustrative:
 
 ```text
 > n
@@ -197,7 +169,7 @@ run makes it write its final report to its log and exit:
 ![managing detached runs](docs/images/detached.png)
 
 On real hardware the experience is identical — you just build with the real
-backends (see **Running on an i.MX95** below).
+backends (see **[Running on an i.MX95](#running-on-an-imx95)** below).
 
 ## What it exercises
 
@@ -205,7 +177,7 @@ backends (see **Running on an i.MX95** below).
 |-------|----------|--------|
 | **GPU** (Arm Mali-G310) | Procedural EGL/GLES scene, complexity scaled by resolution × geometry × lights × shader cost | `low` / `mid` / `max` |
 | **VPU** (Wave codec, V4L2 mem2mem) | Decode and/or encode | `720p` / `1080p` / `4k`, decode and encode independently |
-| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched model — convert on-target via `n` or on a host, see above) |
+| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched model — convert on-target via `n` or on a host, see below) |
 
 Decode and encode are independent (run both at once), but each is
 single-resolution. The GPU level is a single choice.
@@ -256,6 +228,10 @@ for the full build + run + bring-up guide. The short version cross-compiles a
 ready-to-upload binary with a generic aarch64 toolchain (no BSP sysroot — the GLES
 backend `dlopen`s the Mali libs at runtime):
 
+**Prerequisites:** an aarch64 cross toolchain (e.g. `sudo apt install
+g++-aarch64-linux-gnu`). `scripts/fetch-assets.sh` additionally needs `curl` and
+`ffmpeg` to fetch + transcode the test clips.
+
 ```sh
 scripts/fetch-assets.sh        # fetch + transcode the Big Buck Bunny clips (once)
 cmake -S . -B build-aarch64 -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-linux-gnu.cmake \
@@ -270,8 +246,47 @@ Or grab the prebuilt binary from the [latest release](https://github.com/kylefox
 Run as **root** (the DDR PMU and codec/GPU nodes need it). On a new board, press
 **`c`** first to confirm what's runnable. Handy overrides:
 `IMX95_VPU_CODEC=h264|hevc`, `IMX95_VPU_STREAM=<file.h264>`,
-`IMX95_GPU_{W,H,SUBDIV,INSTANCES,LIGHTS,EXTRA,PASSES}`, `IMX95_DDR_BEAT_BYTES`,
-`IMX95_DRM_DEVICE`, `IMX95_NPU_MODEL`. Details in `docs/BOARD.md`.
+`IMX95_GPU_{W,H,SUBDIV,INSTANCES,LIGHTS,EXTRA,PASSES}`, `IMX95_GPU_DUMP=<path.ppm>`,
+`IMX95_DDR_BEAT_BYTES`, `IMX95_DRM_DEVICE`, `IMX95_NPU_MODEL`. Details in
+`docs/BOARD.md`.
+
+### NPU model: match the neutron-converter to your BSP
+
+The Neutron NPU runs a quantized TFLite model **neutron-converted with the
+converter version that matches your board's BSP**. A *mismatched* converter
+makes the driver segfault at model-prepare even though the delegate partitions
+the graph — so the version pairing is what matters. **Same build stamp on the
+converter and the running firmware ⇒ it works**, wherever the converter runs.
+
+**Two ways to get a matching model:**
+
+1. **On the board — menu `n) Prepare NPU model`** (easiest *if* the board ships
+   a converter). The harness reads the firmware and on-board converter build
+   stamps; if they match it converts your `.tflite` right there (one keystroke),
+   caches it, and offers to use it. **If they don't match it refuses** and
+   points you to route 2 — so it never converts straight into the segfault.
+2. **On an x86 host**, with the eIQ converter SDK quarter that matches your BSP.
+   Find the pairing from NXP's open-source [`nxp-imx/neutron`](https://github.com/nxp-imx/neutron)
+   repo: the branch named like your BSP (`lf-<kver>_<rel>`) carries the matching
+   firmware + driver, and the converter quarter maps to that release's date. On
+   the EVK here, `lf-6.12.49_2.2.0` (Q4 2025) → eIQ **SDK 25-12**.
+
+A MobileNet converted for this BSP runs at **~1.7 ms/inf (≈32× over CPU)**.
+
+**Deploying a host-converted model — no env var, no menu step needed.** Upload
+the converted `.tflite` into the **same directory as the binary** on the target
+and just run it; the harness auto-detects it:
+
+- It scans the binary's folder (and the working directory) and picks the one
+  `.tflite` that is **actually neutron-converted** — detected by *content*, so
+  **the filename doesn't matter** (rename it however you like).
+- Plain / un-converted `.tflite` files in the same folder are **ignored**.
+- If **two or more** converted models are present it won't guess — it asks you
+  to pin one with `IMX95_NPU_MODEL=<path>`.
+- Setting `IMX95_NPU_MODEL=<path>` always wins if you prefer to be explicit.
+
+`c) Check system` shows which model it resolved and whether it actually ran.
+Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
 
 ## Build options
 
