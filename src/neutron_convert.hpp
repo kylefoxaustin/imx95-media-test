@@ -31,6 +31,14 @@ NeutronAlign neutron_alignment();
 // has been neutron-converted). A plain quantized model returns false.
 bool tflite_is_converted(const std::string& path);
 
+// Converter metadata a neutron-converted model embeds in its flatbuffer
+// ("Version: 2.2.3+...", "Target: imx95"). Empty fields if absent/plain.
+struct NeutronModelInfo {
+    std::string version;  // converter semver, e.g. "2.2.3" (hash suffix stripped)
+    std::string target;   // e.g. "imx95"
+};
+NeutronModelInfo neutron_model_info(const std::string& path);
+
 // Convert `in` -> `out` for `target` (e.g. "imx95") using the board's converter
 // at `lib` (dlopen'd). Blocking: the caller shows liveness around it. Returns
 // false + err on failure. NOT gated here — the caller MUST confirm

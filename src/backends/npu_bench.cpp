@@ -106,13 +106,30 @@ std::string resolve_npu_model(std::string& how, std::string& err) {
         return "";
     }
     if (hits.size() > 1) {
+        // Show HOW to pick one (env var in front of the command), with a real
+        // filename filled in, then list the candidates.
         std::string list;
-        for (size_t i = 0; i < hits.size(); ++i) list += (i ? ", " : "") + hits[i];
-        err = "multiple converted models found (" + list + ") — set IMX95_NPU_MODEL to pick one.";
+        for (const auto& h : hits) list += "\n      " + h;
+        err = "multiple converted models found — pin one by launching with the model\n"
+              "    in front of the command, e.g.:\n"
+              "      IMX95_NPU_MODEL=" + hits[0] + " ./imx95-test\n"
+              "    candidates:" + list;
         return "";
     }
     how = "auto-detected";
     return hits[0];
+}
+
+// " (converter 2.2.3, target imx95)" for a converted model, or "" if it carries
+// no version metadata — appended to status lines so you see exactly what ran.
+std::string model_version_suffix(const std::string& path) {
+    NeutronModelInfo mi = neutron_model_info(path);
+    if (mi.version.empty() && mi.target.empty()) return "";
+    std::string s = " (";
+    if (!mi.version.empty()) s += "converter " + mi.version;
+    if (!mi.target.empty()) s += (mi.version.empty() ? "" : ", ") + std::string("target ") + mi.target;
+    s += ")";
+    return s;
 }
 
 class BenchNpu : public Workload {
@@ -128,7 +145,8 @@ public:
         model_ = resolve_npu_model(how, err);
         if (model_.empty()) return false;  // err already set with guidance
         if (how == "auto-detected")
-            std::fprintf(stderr, "[NPU] using auto-detected converted model: %s\n", model_.c_str());
+            std::fprintf(stderr, "[NPU] using auto-detected converted model: %s%s\n",
+                         model_.c_str(), model_version_suffix(model_).c_str());
         const char* d = std::getenv("IMX95_NPU_DELEGATE");
         delegate_ = (d && *d) ? d : "/usr/lib/libneutron_delegate.so";
         if (const char* r = std::getenv("IMX95_NPU_RUNS")) {
@@ -233,7 +251,8 @@ CheckResult npu_check() {
         w->shutdown();
         std::string fwctx;
         if (!al.firmware.empty()) fwctx = "  [firmware " + al.firmware + "]";
-        return {true, "Neutron inference OK (" + how + ": " + base_name(model) + ")" + fwctx};
+        return {true, "Neutron inference OK (" + how + ": " + base_name(model) + ")" +
+                          model_version_suffix(model) + fwctx};
     }
     // Model present but the probe failed — surface the likely mismatch context.
     return {false, err + align_context(al)};

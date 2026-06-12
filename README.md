@@ -316,8 +316,10 @@ and just run it; the harness auto-detects it:
   to pin one with `IMX95_NPU_MODEL=<path>`.
 - Setting `IMX95_NPU_MODEL=<path>` always wins if you prefer to be explicit.
 
-`c) Check system` shows which model it resolved and whether it actually ran.
-Full recipe + conversion snippet in [`docs/BOARD.md`](docs/BOARD.md).
+`c) Check system` shows which model it resolved, **its converter version**
+(e.g. `converter 2.2.3, target imx95`), and whether it actually ran — so you can
+see at a glance exactly what's loaded. Full recipe + conversion snippet in
+[`docs/BOARD.md`](docs/BOARD.md).
 
 ## Build options
 

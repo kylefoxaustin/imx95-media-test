@@ -7,6 +7,7 @@
 
 #include "neutron_convert.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
@@ -90,6 +91,38 @@ bool tflite_is_converted(const std::string& path) {
     // Neutron-converted models embed these custom-op names; a plain TFLite has none.
     return s.find("NeutronGraph") != std::string::npos ||
            s.find("NeutronMicrocode") != std::string::npos;
+}
+
+NeutronModelInfo neutron_model_info(const std::string& path) {
+    NeutronModelInfo info;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return info;
+    std::string s;
+    char buf[1 << 16];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        s.append(buf, n);
+        if (s.size() > (64u << 20)) break;
+    }
+    std::fclose(f);
+    // The converter writes plain strings like "Version: 2.2.3+0X..." and
+    // "Target: imx95". Pull the token after each key, stopping at the first char
+    // that isn't part of a version/target (so the "+<hash>" and trailing binary
+    // are dropped).
+    auto extract = [&s](const char* key) -> std::string {
+        size_t p = s.find(key);
+        if (p == std::string::npos) return "";
+        p += std::strlen(key);
+        size_t e = p;
+        auto ok = [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' || c == '-';
+        };
+        while (e < s.size() && ok(s[e])) ++e;
+        return s.substr(p, e - p);
+    };
+    info.version = extract("Version: ");
+    info.target = extract("Target: ");
+    return info;
 }
 
 bool neutron_convert_file(const std::string& lib, const std::string& in,

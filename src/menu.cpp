@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <string>
@@ -43,6 +44,11 @@ std::string read_line(const char* prompt) {
 }
 
 void rule() { std::puts("--------------------------------------------------"); }
+
+bool path_exists(const std::string& p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0;
+}
 
 // Radio picker for the GPU level. Selection applies immediately and stays
 // visible; 'b' returns. No submit/clear ceremony.
@@ -226,7 +232,10 @@ bool run_menu(const Config& cfg) {
     }
     if (cfg.npu) {
         const char* m = std::getenv("IMX95_NPU_MODEL");
-        if (m && *m && !tflite_is_converted(m))
+        if (m && *m && !path_exists(m))
+            std::printf("\nNote: IMX95_NPU_MODEL points to a missing file (%s) — the NPU run will "
+                        "fail to init. Fix the path, or unset it to auto-detect.\n", m);
+        else if (m && *m && !tflite_is_converted(m))
             std::puts("\nNote: IMX95_NPU_MODEL isn't Neutron-converted for this board — it will run "
                       "on CPU. Use main menu 'n) Prepare NPU model' to convert it.");
         else if (!m || !*m)
@@ -272,11 +281,6 @@ void loadsave_menu(Config& cfg) {
             return;
         }
     }
-}
-
-bool path_exists(const std::string& p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0;
 }
 
 // Where a converted model is cached: alongside the input, stamped with the
@@ -441,18 +445,23 @@ void check_system() {
     rule();
     std::printf("%d of 4 blocks ready to run on this target.\n", runnable);
 
-    // NPU conversion picture: can we prepare a model on-target, or must it be
-    // done on a host? (Same stamp gate the 'n' action enforces.)
-    NeutronAlign al = neutron_alignment();
-    if (!al.firmware.empty() || !al.converter.empty()) {
-        if (al.converter.empty())
-            std::printf("NPU model: no on-board converter — convert on a host matching firmware %s.\n",
-                        al.firmware.empty() ? "(unknown)" : al.firmware.c_str());
-        else if (al.matched)
-            std::puts("NPU model: on-board converter MATCHES firmware — use menu 'n' to convert on target.");
-        else
-            std::printf("NPU model: converter (%s) != firmware (%s) — convert on a host (menu 'n' explains).\n",
-                        al.converter.c_str(), al.firmware.c_str());
+    // NPU conversion advice — only when the NPU is NOT already running a model
+    // (when it's green, telling the user to go convert one is just noise).
+    bool npu_ok = false;
+    for (auto& row : rows)
+        if (std::strcmp(row.name, "NPU") == 0) npu_ok = row.r.ok;
+    if (!npu_ok) {
+        NeutronAlign al = neutron_alignment();
+        if (!al.firmware.empty() || !al.converter.empty()) {
+            if (al.converter.empty())
+                std::printf("NPU model: no on-board converter — convert on a host/AI Hub matching firmware %s.\n",
+                            al.firmware.empty() ? "(unknown)" : al.firmware.c_str());
+            else if (al.matched)
+                std::puts("NPU model: on-board converter MATCHES firmware — use menu 'n' to convert on target.");
+            else
+                std::printf("NPU model: converter (%s) != firmware (%s) — convert on a host (menu 'n' explains).\n",
+                            al.converter.c_str(), al.firmware.c_str());
+        }
     }
     read_line("-- press Enter to return --");
 }
