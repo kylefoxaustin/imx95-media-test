@@ -471,8 +471,8 @@ void show_help() {
     static const char* p1 = R"(i.MX95 Media Test Framework - quick help   (1/3)
 
 WHAT IT DOES
-  Apply heavy GPU / VPU workloads (alone or together) and measure how they
-  affect each other - chiefly via global DDR memory bandwidth.
+  Apply heavy GPU / VPU / NPU workloads (alone or together) and measure how
+  they affect each other - chiefly via global DDR memory bandwidth.
 
 MAIN MENU
   1) Configure   choose which blocks to run, and how hard
@@ -523,8 +523,11 @@ TUNING  (environment variables, set before launching the program)
 
 NPU MODEL
   The NPU needs a quantized .tflite neutron-converted for THIS board's BSP.
-  Menu 'n' converts one on-target when the board's converter matches its
-  firmware (it checks, and refuses a mismatch); otherwise convert on a host.
+  Easiest: drop a converted model next to the binary - it auto-detects it
+  (by content; pin with IMX95_NPU_MODEL=<file> if several are present).
+  Get one three ways: menu 'n' (on-target, if the board ships a converter),
+  an x86 host converter, or the eIQ AI Hub (eiq.nxp.com/ai-hub).
+  'c) Check system' reports the model it loaded and its converter version.
 
   Run as root so the DDR PMU and codec/GPU device nodes are accessible.)";
 
