@@ -382,10 +382,23 @@ CheckResult vpu_check() {
     if (dec.empty()) dec = V4l2M2m::find_device(codec, 0);
     std::string enc = V4l2M2m::find_device(V4L2_PIX_FMT_NV12, codec);
     if (enc.empty()) enc = V4l2M2m::find_device(0, codec);
-    bool ok = !dec.empty() || !enc.empty();
+
+    // A node can ENUM_FMT-advertise codec caps without backing a real session
+    // (a model/registration stub, or a capture node mis-IDed). Confirm each by
+    // actually allocating its input (OUTPUT) queue — coded input for decode,
+    // raw input for encode — before calling it usable.
+    bool dec_v = !dec.empty() && V4l2M2m::verify_codec_node(dec, codec);
+    bool enc_v = !enc.empty() && V4l2M2m::verify_codec_node(enc, V4L2_PIX_FMT_NV12);
+
+    auto side = [](const std::string& path, bool verified) -> std::string {
+        if (path.empty()) return "none";
+        return path + (verified ? "" : " (advertised only — REQBUFS failed)");
+    };
+    bool ok = dec_v || enc_v;
     std::string d = "codec " + std::string(env_or("IMX95_VPU_CODEC", "h264")) + " — decode " +
-                    (dec.empty() ? std::string("none") : dec) + ", encode " +
-                    (enc.empty() ? std::string("none") : enc);
+                    side(dec, dec_v) + ", encode " + side(enc, enc_v);
+    if (!ok && (!dec.empty() || !enc.empty()))
+        d += "  (advertises the codec but can't allocate buffers — not a real codec here)";
     return {ok, d};
 }
 

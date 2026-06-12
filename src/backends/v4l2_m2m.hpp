@@ -41,6 +41,13 @@ public:
     // Returns the path, or "" if none.
     static std::string find_device(uint32_t out_fourcc, uint32_t cap_fourcc);
 
+    // Verify a candidate node can actually back a codec session — not just
+    // advertise the caps. Sets the OUTPUT (input-data) format to `out_fourcc`
+    // and REQBUFS(1) on it, then releases. A node that only ENUM_FMT-advertises
+    // the format (e.g. a model/registration stub) fails to allocate here.
+    // Returns true only if a buffer queue is genuinely created.
+    static bool verify_codec_node(const std::string& path, uint32_t out_fourcc);
+
     bool has_format(Side s, uint32_t fourcc) const;
     uint32_t first_raw_format(Side s) const;  // first uncompressed fmt, or 0
 

@@ -269,4 +269,52 @@ std::string V4l2M2m::find_device(uint32_t out_fourcc, uint32_t cap_fourcc) {
     return "";
 }
 
+bool V4l2M2m::verify_codec_node(const std::string& path, uint32_t out_fourcc) {
+    int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK);
+    if (fd < 0) return false;
+    uint32_t c = device_caps(fd);
+    bool mp = c & V4L2_CAP_VIDEO_M2M_MPLANE;
+    bool sp = c & V4L2_CAP_VIDEO_M2M;
+    if (!mp && !sp) { ::close(fd); return false; }
+    uint32_t outT = mp ? V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE : V4L2_BUF_TYPE_VIDEO_OUTPUT;
+
+    // Best-effort S_FMT on the OUTPUT (input-data) queue with the format we'd
+    // feed it. Ignore failure — some drivers REQBUFS off a default format — but
+    // it gives a real codec the size hint it wants.
+    if (out_fourcc) {
+        v4l2_format f{};
+        f.type = outT;
+        if (mp) {
+            f.fmt.pix_mp.width = 1920;
+            f.fmt.pix_mp.height = 1080;
+            f.fmt.pix_mp.pixelformat = out_fourcc;
+            f.fmt.pix_mp.num_planes = 1;
+            f.fmt.pix_mp.field = V4L2_FIELD_NONE;
+            f.fmt.pix_mp.plane_fmt[0].sizeimage = 1u << 20;  // 1 MiB coded buffer
+        } else {
+            f.fmt.pix.width = 1920;
+            f.fmt.pix.height = 1080;
+            f.fmt.pix.pixelformat = out_fourcc;
+            f.fmt.pix.field = V4L2_FIELD_NONE;
+            f.fmt.pix.sizeimage = 1u << 20;
+        }
+        xioctl(fd, VIDIOC_S_FMT, &f);
+    }
+
+    // The real gate: can the node actually allocate an OUTPUT buffer queue?
+    v4l2_requestbuffers rb{};
+    rb.count = 1;
+    rb.type = outT;
+    rb.memory = V4L2_MEMORY_MMAP;
+    bool ok = xioctl(fd, VIDIOC_REQBUFS, &rb) == 0 && rb.count >= 1;
+
+    // Release whatever we asked for, then close.
+    v4l2_requestbuffers rel{};
+    rel.type = outT;
+    rel.memory = V4L2_MEMORY_MMAP;
+    xioctl(fd, VIDIOC_REQBUFS, &rel);
+    ::close(fd);
+    return ok;
+}
+
 } // namespace imx95
