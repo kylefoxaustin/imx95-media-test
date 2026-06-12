@@ -5,6 +5,8 @@
 #include <ctime>
 #include <iostream>
 #include <string>
+#include <sys/utsname.h>
+#include <unistd.h>
 
 #include "backend.hpp"
 #include "config.hpp"
@@ -259,6 +261,36 @@ void loadsave_menu(Config& cfg) {
 
 } // namespace
 
+// Preflight: probe each block and report whether this target can run it.
+void check_system() {
+    rule();
+    struct utsname u;
+    if (uname(&u) == 0)
+        std::printf("System check — %s %s %s\n", u.sysname, u.release, u.machine);
+    else
+        std::puts("System check");
+    std::printf("backends built: gpu:%s vpu:%s npu:%s ddr:%s\n", gpu_backend_name(),
+                vpu_backend_name(), npu_backend_name(), ddr_backend_name());
+    std::printf("running as: %s\n",
+                geteuid() == 0 ? "root" : "NON-root (root needed for DDR PMU + device nodes)");
+    rule();
+    std::puts("probing (this may take a moment)...");
+    struct Row {
+        const char* name;
+        CheckResult r;
+    };
+    Row rows[] = {
+        {"GPU", gpu_check()}, {"VPU", vpu_check()}, {"NPU", npu_check()}, {"DDR", ddr_check()}};
+    int runnable = 0;
+    for (auto& row : rows) {
+        std::printf("  %-5s [%s]  %s\n", row.name, row.r.ok ? " ok " : "FAIL", row.r.detail.c_str());
+        if (row.r.ok) ++runnable;
+    }
+    rule();
+    std::printf("%d of 4 blocks ready to run on this target.\n", runnable);
+    read_line("-- press Enter to return --");
+}
+
 // Succinct operating guide, paginated so it never scrolls off in one blast.
 void show_help() {
     static const char* p1 = R"(i.MX95 Media Test Framework - quick help   (1/3)
@@ -343,6 +375,7 @@ void run_app() {
         std::puts("  2) Run");
         std::printf("  3) Detached runs%s\n", active ? (" (" + std::to_string(active) + " active)").c_str() : "");
         std::puts("  4) Load / Save config");
+        std::puts("  c) Check system (what can this board run?)");
         std::puts("  h) Help");
         std::puts("  q) Quit");
         std::string c = read_line("> ");
@@ -350,6 +383,7 @@ void run_app() {
         else if (c == "2") { if (run_menu(cfg)) break; }
         else if (c == "3") detached_runs_menu();
         else if (c == "4") loadsave_menu(cfg);
+        else if (c == "c") check_system();
         else if (c == "h" || c == "?") show_help();
         else if (c == "q") break;
     }

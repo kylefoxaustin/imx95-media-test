@@ -40,4 +40,6 @@ std::unique_ptr<Workload> make_npu_workload() { return std::make_unique<MockNpu>
 
 const char* npu_backend_name() { return "mock"; }
 
+CheckResult npu_check() { return {true, "mock backend (simulated NPU)"}; }
+
 } // namespace imx95

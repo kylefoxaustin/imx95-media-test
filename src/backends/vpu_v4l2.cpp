@@ -376,4 +376,17 @@ std::unique_ptr<Workload> make_encode_workload(VideoRes res) {
 
 const char* vpu_backend_name() { return "v4l2"; }
 
+CheckResult vpu_check() {
+    uint32_t codec = selected_codec();
+    std::string dec = V4l2M2m::find_device(codec, V4L2_PIX_FMT_NV12);
+    if (dec.empty()) dec = V4l2M2m::find_device(codec, 0);
+    std::string enc = V4l2M2m::find_device(V4L2_PIX_FMT_NV12, codec);
+    if (enc.empty()) enc = V4l2M2m::find_device(0, codec);
+    bool ok = !dec.empty() || !enc.empty();
+    std::string d = "codec " + std::string(env_or("IMX95_VPU_CODEC", "h264")) + " — decode " +
+                    (dec.empty() ? std::string("none") : dec) + ", encode " +
+                    (enc.empty() ? std::string("none") : enc);
+    return {ok, d};
+}
+
 } // namespace imx95

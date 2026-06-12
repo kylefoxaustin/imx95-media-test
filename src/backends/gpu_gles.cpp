@@ -631,4 +631,12 @@ std::unique_ptr<Workload> make_gpu_workload(GpuLevel lvl) {
 
 const char* gpu_backend_name() { return "gles"; }
 
+CheckResult gpu_check() {
+    auto w = make_gpu_workload(GpuLevel::Low);  // light: init EGL+GLES, then tear down
+    std::string err;
+    if (!w->init(err)) return {false, err};
+    w->shutdown();
+    return {true, "EGL/GLES headless init OK"};
+}
+
 } // namespace imx95

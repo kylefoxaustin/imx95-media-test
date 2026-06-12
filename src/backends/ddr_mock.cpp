@@ -24,4 +24,6 @@ std::unique_ptr<DdrMonitor> make_ddr_monitor() {
 
 const char* ddr_backend_name() { return "mock"; }
 
+CheckResult ddr_check() { return {true, "mock backend (estimated traffic)"}; }
+
 } // namespace imx95

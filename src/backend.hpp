@@ -57,4 +57,16 @@ const char* vpu_backend_name();
 const char* npu_backend_name();
 const char* ddr_backend_name();
 
+// Lightweight preflight probe per subsystem: can this target actually run the
+// workload? ok=false means it would fail (with the reason in detail); ok=true's
+// detail says how (device node, EGL platform, real-vs-estimate, etc.).
+struct CheckResult {
+    bool ok = false;
+    std::string detail;
+};
+CheckResult gpu_check();
+CheckResult vpu_check();
+CheckResult npu_check();
+CheckResult ddr_check();
+
 } // namespace imx95

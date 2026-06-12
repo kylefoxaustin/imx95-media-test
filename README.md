@@ -63,6 +63,12 @@ Then drive the menu (it mirrors the screenshots above):
    quit), or **Ctrl-C** to stop gracefully. Either way you get a per-workload +
    DDR **run report**.
 
+Not sure what your target supports? Press **`c`** for **Check system** — it
+probes each block and tells you what's runnable here (and *why* something isn't),
+before you run anything:
+
+![check system](docs/images/check.png)
+
 Press **`h`** at the main menu any time for a built-in, paginated quick-help
 screen (it pauses between pages rather than scrolling off):
 

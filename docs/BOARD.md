@@ -47,6 +47,10 @@ aarch64-linux-gnu-strip build-aarch64/imx95-test   # ~1.1 MB
 
 ## Run
 
+**First thing to do on a new board:** start the app and press **`c`** (Check
+system). It probes GPU/VPU/NPU/DDR and reports what's runnable and why — a fast
+way to confirm the board before configuring a run.
+
 Run as **root** — the DDR PMU needs permission for system perf events and the
 codec/GPU device nodes typically need it too:
 

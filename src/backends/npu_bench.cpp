@@ -124,4 +124,12 @@ std::unique_ptr<Workload> make_npu_workload() { return std::make_unique<BenchNpu
 
 const char* npu_backend_name() { return "bench"; }
 
+CheckResult npu_check() {
+    auto w = make_npu_workload();  // init() locates tools/model + probes one inference
+    std::string err;
+    if (!w->init(err)) return {false, err};
+    w->shutdown();
+    return {true, "Neutron delegate inference probe OK"};
+}
+
 } // namespace imx95

@@ -57,4 +57,6 @@ std::unique_ptr<Workload> make_gpu_workload(GpuLevel lvl) {
 
 const char* gpu_backend_name() { return "mock"; }
 
+CheckResult gpu_check() { return {true, "mock backend (simulated GPU)"}; }
+
 } // namespace imx95

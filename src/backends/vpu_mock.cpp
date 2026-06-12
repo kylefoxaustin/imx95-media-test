@@ -83,4 +83,6 @@ std::unique_ptr<Workload> make_encode_workload(VideoRes res) {
 
 const char* vpu_backend_name() { return "mock"; }
 
+CheckResult vpu_check() { return {true, "mock backend (simulated VPU)"}; }
+
 } // namespace imx95

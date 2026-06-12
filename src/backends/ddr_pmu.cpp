@@ -178,4 +178,19 @@ std::unique_ptr<DdrMonitor> make_ddr_monitor() { return std::make_unique<DdrPmu>
 
 const char* ddr_backend_name() { return "pmu"; }
 
+CheckResult ddr_check() {
+    // DDR monitoring always works (real PMU or estimate fallback); say which.
+    std::string name = env_or("IMX95_DDR_PMU", "");
+    if (name.empty()) {
+        if (DIR* dir = opendir("/sys/bus/event_source/devices/")) {
+            for (dirent* e; (e = readdir(dir));)
+                if (std::strncmp(e->d_name, "imx9_ddr", 8) == 0) { name = e->d_name; break; }
+            closedir(dir);
+        }
+    }
+    if (name.empty()) return {true, "no imx9_ddr PMU — estimated traffic (still works)"};
+    bool root = geteuid() == 0;
+    return {true, "DDR PMU " + name + (root ? "" : " (run as root for perf access)")};
+}
+
 } // namespace imx95
