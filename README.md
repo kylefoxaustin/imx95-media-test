@@ -219,10 +219,10 @@ a datasheet:
   under the LPDDR ceiling) — the VPU engine is the limiter, not memory.
 
 **Capstone — all four blocks maxed at once, on the hardest board.** On an
-early-walnascar `b307_2025.02.05` EVK (the one board *no* public converter quarter
-could run), a model converted via the [eIQ AI Hub](https://eiq.nxp.com/ai-hub)
-(neutron-converter **2.2.3**) drove the whole SoC flat-out — GPU `max`, **4K
-decode + 4K encode**, and NPU, simultaneously:
+early-walnascar `b307_2025.02.05` EVK (the board the older PyPI converter *quarters*
+segfaulted on), a model converted via the [eIQ AI Hub](https://eiq.nxp.com/ai-hub)
+drove the whole SoC flat-out — GPU `max`, **4K decode + 4K encode**, and NPU,
+simultaneously:
 
 | Block | Maxed together | Alone | Read |
 |---|---|---|---|
@@ -236,6 +236,15 @@ The 4K decode and encode collapsing to the *exact same* 43.6 fps is the single
 time-sliced Wave engine, proven the hard way; the NPU holding station is Neutron's
 isolation. That cross-block insight — invisible from specs — is exactly what the
 harness is for.
+
+**On converter compatibility (a useful correction).** We originally branded b307
+"the board nothing could convert for" because the early **PyPI SDK-quarter**
+converters segfaulted on it. The AI Hub tells a different story: its converters
+**2.2.1, 2.2.3, *and* 3.0.0** all ran on b307 (347.9 / 353.5 / 356.4 inf/s
+standalone — a full major version apart). So the real takeaway isn't "match the
+version to the byte or it crashes" — it's that the tolerance is **wide**, the early
+quarter packages were simply the wrong lineage for i.MX95, and the **eIQ AI Hub is
+the robust way to get a working model**, especially on an older BSP.
 
 ## Running on an i.MX95
 
