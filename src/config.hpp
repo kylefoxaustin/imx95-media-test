@@ -18,11 +18,12 @@ struct Config {
     GpuLevel gpu = GpuLevel::Off;
     VideoRes dec = VideoRes::Off;
     VideoRes enc = VideoRes::Off;
+    bool npu = false;  // loop NPU inference (eIQ Neutron)
 
     bool any() const {
-        return gpu != GpuLevel::Off || dec != VideoRes::Off || enc != VideoRes::Off;
+        return gpu != GpuLevel::Off || dec != VideoRes::Off || enc != VideoRes::Off || npu;
     }
-    void clear() { gpu = GpuLevel::Off; dec = VideoRes::Off; enc = VideoRes::Off; }
+    void clear() { gpu = GpuLevel::Off; dec = VideoRes::Off; enc = VideoRes::Off; npu = false; }
 
     // One-line summary for headers, e.g. "[GPU mid]  [DEC 1080p]  [ENC 4k]".
     std::string summary() const;

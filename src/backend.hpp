@@ -47,12 +47,14 @@ public:
 std::unique_ptr<Workload>   make_gpu_workload(GpuLevel lvl);
 std::unique_ptr<Workload>   make_decode_workload(VideoRes res);
 std::unique_ptr<Workload>   make_encode_workload(VideoRes res);
+std::unique_ptr<Workload>   make_npu_workload();
 std::unique_ptr<DdrMonitor> make_ddr_monitor();
 
 // Each subsystem is selected independently at build time, so report them
-// separately, e.g. "gpu:gles  vpu:mock  ddr:mock".
+// separately, e.g. "gpu:gles  vpu:mock  npu:bench  ddr:mock".
 const char* gpu_backend_name();
 const char* vpu_backend_name();
+const char* npu_backend_name();
 const char* ddr_backend_name();
 
 } // namespace imx95

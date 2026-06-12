@@ -29,10 +29,13 @@ bandwidth; stop any time for a final report:
 > |-----------|:------:|------|
 > | GPU | ✅ | ✅ `gles` — EGL + GLES2, headless via GBM; host Mesa **and** i.MX95 Mali |
 > | VPU | ✅ | ✅ `v4l2` — V4L2 mem2mem decode/encode; H.264 on the i.MX95 Wave VPU |
+> | NPU | ✅ | 🔬 `bench` — eIQ Neutron via `benchmark_model` + delegate; needs a BSP-matched neutron-converted model |
 > | DDR | ✅ | ✅ `pmu` — i.MX9 DDR perf counters via `perf_event_open` |
 >
-> Still in progress: NPU (eIQ Neutron), an optional on-screen GPU window, and
-> tuning. See [`docs/DESIGN.md`](docs/DESIGN.md).
+> NPU stack is wired and the Neutron delegate offloads on hardware; running a
+> model end-to-end needs a `.tflite` neutron-converted with the converter
+> version matching your board's BSP (see [`docs/BOARD.md`](docs/BOARD.md)). Also
+> in progress: an optional on-screen GPU window.
 
 ## Quick start — try the UI in 30 seconds (no i.MX95 needed)
 
@@ -80,7 +83,7 @@ backends (see **Running on an i.MX95** below).
 |-------|----------|--------|
 | **GPU** (Arm Mali-G310) | Procedural EGL/GLES scene, complexity scaled by resolution × geometry × lights × shader cost | `low` / `mid` / `max` |
 | **VPU** (Wave codec, V4L2 mem2mem) | Decode and/or encode | `720p` / `1080p` / `4k`, decode and encode independently |
-| **NPU** (eIQ Neutron) | TBD | — |
+| **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (supply a neutron-converted model) |
 
 Decode and encode are independent (run both at once), but each is
 single-resolution. The GPU level is a single choice.

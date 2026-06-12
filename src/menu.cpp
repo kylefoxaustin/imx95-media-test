@@ -81,11 +81,13 @@ void configure_menu(Config& cfg) {
         std::printf("  1) GPU ........... %s\n", to_string(cfg.gpu));
         std::printf("  2) VPU decode .... %s\n", to_string(cfg.dec));
         std::printf("  3) VPU encode .... %s\n", to_string(cfg.enc));
+        std::printf("  4) NPU inference . %s\n", cfg.npu ? "on" : "off");
         std::puts("  c) Clear all");
         std::string c = read_line("> ");
         if (c == "1") pick_gpu(cfg);
         else if (c == "2") pick_res(cfg.dec, "VPU decode");
         else if (c == "3") pick_res(cfg.enc, "VPU encode");
+        else if (c == "4") cfg.npu = !cfg.npu;  // on/off toggle
         else if (c == "c") cfg.clear();
         else if (c == "b" || c == "q") return;
     }
@@ -96,6 +98,7 @@ void list_selected(const Config& cfg) {
     if (cfg.gpu != GpuLevel::Off) std::printf("  - GPU %s\n", to_string(cfg.gpu));
     if (cfg.dec != VideoRes::Off) std::printf("  - VPU decode %s\n", to_string(cfg.dec));
     if (cfg.enc != VideoRes::Off) std::printf("  - VPU encode %s\n", to_string(cfg.enc));
+    if (cfg.npu) std::puts("  - NPU inference");
 }
 
 // Prompt for a loop count; returns the count, or -1 if the user backed out.
@@ -326,8 +329,9 @@ TUNING  (environment variables, set before launching the program)
 void run_app() {
     install_signal_handlers();
     Config cfg;
-    std::printf("\n== i.MX95 Media Test Framework v%s ==   (backends: gpu:%s vpu:%s ddr:%s)\n",
-                IMX95_VERSION, gpu_backend_name(), vpu_backend_name(), ddr_backend_name());
+    std::printf("\n== i.MX95 Media Test Framework v%s ==   (backends: gpu:%s vpu:%s npu:%s ddr:%s)\n",
+                IMX95_VERSION, gpu_backend_name(), vpu_backend_name(), npu_backend_name(),
+                ddr_backend_name());
 
     for (;;) {
         rule();

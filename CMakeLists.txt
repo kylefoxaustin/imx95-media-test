@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 cmake_minimum_required(VERSION 3.16)
-project(imx95-media-test VERSION 1.0.3 LANGUAGES CXX)
+project(imx95-media-test VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,8 +13,9 @@ endif()
 # qemu-imx95). The GLES GPU backend builds and runs on host Mesa *and* on the
 # i.MX95 Mali driver from the same source.
 set(IMX95_GPU "mock" CACHE STRING "GPU backend: mock | gles")
-set(IMX95_VPU "mock" CACHE STRING "VPU backend: mock | v4l2 (todo)")
-set(IMX95_DDR "mock" CACHE STRING "DDR monitor: mock | pmu (todo)")
+set(IMX95_VPU "mock" CACHE STRING "VPU backend: mock | v4l2")
+set(IMX95_NPU "mock" CACHE STRING "NPU backend: mock | bench")
+set(IMX95_DDR "mock" CACHE STRING "DDR monitor: mock | pmu")
 
 add_executable(imx95-test
   src/main.cpp
@@ -70,6 +71,16 @@ else()
   message(FATAL_ERROR "IMX95_VPU must be 'mock' or 'v4l2' (got '${IMX95_VPU}')")
 endif()
 
+# --- NPU ---------------------------------------------------------------------
+if(IMX95_NPU STREQUAL "bench")
+  # Drives the platform's benchmark_model (Neutron delegate); no libs to link.
+  target_sources(imx95-test PRIVATE src/backends/npu_bench.cpp)
+elseif(IMX95_NPU STREQUAL "mock")
+  target_sources(imx95-test PRIVATE src/backends/npu_mock.cpp)
+else()
+  message(FATAL_ERROR "IMX95_NPU must be 'mock' or 'bench' (got '${IMX95_NPU}')")
+endif()
+
 # --- DDR ---------------------------------------------------------------------
 if(IMX95_DDR STREQUAL "pmu")
   # i.MX9 DDR PMU via perf_event_open: kernel uAPI only, no libraries.
@@ -80,4 +91,4 @@ else()
   message(FATAL_ERROR "IMX95_DDR must be 'mock' or 'pmu' (got '${IMX95_DDR}')")
 endif()
 
-message(STATUS "Backends:  gpu=${IMX95_GPU}  vpu=${IMX95_VPU}  ddr=${IMX95_DDR}")
+message(STATUS "Backends:  gpu=${IMX95_GPU}  vpu=${IMX95_VPU}  npu=${IMX95_NPU}  ddr=${IMX95_DDR}")

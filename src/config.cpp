@@ -52,6 +52,7 @@ std::string Config::summary() const {
     if (gpu != GpuLevel::Off) add(std::string("[GPU ") + to_string(gpu) + "]");
     if (dec != VideoRes::Off) add(std::string("[DEC ") + to_string(dec) + "]");
     if (enc != VideoRes::Off) add(std::string("[ENC ") + to_string(enc) + "]");
+    if (npu) add("[NPU]");
     return os.str();
 }
 
@@ -60,7 +61,8 @@ bool Config::save(const std::string& path, std::string& err) const {
     if (!f) { err = "cannot open " + path + " for writing"; return false; }
     f << "gpu=" << to_string(gpu) << "\n"
       << "dec=" << to_string(dec) << "\n"
-      << "enc=" << to_string(enc) << "\n";
+      << "enc=" << to_string(enc) << "\n"
+      << "npu=" << (npu ? "1" : "0") << "\n";
     if (!f) { err = "write failed on " + path; return false; }
     return true;
 }
@@ -77,6 +79,7 @@ bool Config::load(const std::string& path, std::string& err) {
         if (k == "gpu") tmp.gpu = gpu_from(v);
         else if (k == "dec") tmp.dec = res_from(v);
         else if (k == "enc") tmp.enc = res_from(v);
+        else if (k == "npu") tmp.npu = (v == "1" || v == "on" || v == "true");
     }
     *this = tmp;
     return true;

@@ -92,6 +92,35 @@ Suggested first run: **Configure** GPU mid + VPU decode 1080p + VPU encode 1080p
 Then re-run a single block alone and compare the DDR numbers — that delta is the
 cross-block interference the tool exists to measure.
 
+## NPU (eIQ Neutron) — `-DIMX95_NPU=bench`
+
+The NPU workload loops inference through the platform's `benchmark_model` + the
+Neutron delegate. It needs a quantized `.tflite` that has been **neutron-converted
+for your board**, then:
+
+```sh
+IMX95_NPU_MODEL=/path/model_neutron.tflite ./imx95-test   # required
+# optional: IMX95_NPU_BENCH=<benchmark_model>  IMX95_NPU_DELEGATE=<.so>  IMX95_NPU_RUNS=500
+```
+
+**Converting a model** (on an x86 host) with NXP's `neutron_converter_SDK_<qtr>`
+(from `https://eiq.nxp.com/repository`):
+
+```py
+import neutron_converter_SDK_25_03.neutron_converter as nc
+open("m_neutron.tflite","wb").write(bytes(
+    nc.convertModel(list(open("m_quant.tflite","rb").read()), "imx95")))
+```
+
+> **Critical: the converter version must match the board's BSP.** The Neutron
+> firmware/driver and the converter share a microcode format; a mismatch makes
+> `libNeutronDriver.so` crash in model-prepare (segfault) even though the
+> delegate partitions the graph. Pick the converter quarter from the firmware
+> build date: `strings /lib/firmware/NeutronFirmware.elf | grep 'clang version'`.
+> If no public converter matches an early/pre-release BSP, use the converter
+> bundled with that exact BSP release. The harness probes the model on startup
+> and fails with this guidance if it doesn't execute.
+
 ## Things to watch on first bring-up (please report back)
 
 - **GPU/EGL headless:** the backend renders without a compositor by opening a

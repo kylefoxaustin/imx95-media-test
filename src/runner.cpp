@@ -157,8 +157,8 @@ char pause_overlay() {
 void print_report(const Tracks& tracks, double elapsed,
                   const DdrSample& ddr, uint64_t target_loops, RunOutcome outcome) {
     std::printf("\n==== Run report ====\n");
-    std::printf("backends: gpu:%s vpu:%s ddr:%s   mode: %s   elapsed: %.2f s   ended: %s\n",
-                gpu_backend_name(), vpu_backend_name(), ddr_backend_name(),
+    std::printf("backends: gpu:%s vpu:%s npu:%s ddr:%s   mode: %s   elapsed: %.2f s   ended: %s\n",
+                gpu_backend_name(), vpu_backend_name(), npu_backend_name(), ddr_backend_name(),
                 mode_str(target_loops), elapsed,
                 outcome == RunOutcome::Completed ? "completed"
                 : outcome == RunOutcome::QuitApp ? "quit"
@@ -214,6 +214,7 @@ RunOutcome run_workloads(const Config& cfg, uint64_t target_loops, bool headless
     if (cfg.gpu != GpuLevel::Off) loads.push_back(make_gpu_workload(cfg.gpu));
     if (cfg.dec != VideoRes::Off) loads.push_back(make_decode_workload(cfg.dec));
     if (cfg.enc != VideoRes::Off) loads.push_back(make_encode_workload(cfg.enc));
+    if (cfg.npu) loads.push_back(make_npu_workload());
     auto ddr = make_ddr_monitor();
 
     if (loads.empty()) {
