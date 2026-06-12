@@ -21,8 +21,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <glob.h>
 #include <string>
 #include <sys/stat.h>
+#include <vector>
 
 #include "backend.hpp"
 #include "backends/traffic_estimate.hpp"
@@ -124,12 +126,75 @@ std::unique_ptr<Workload> make_npu_workload() { return std::make_unique<BenchNpu
 
 const char* npu_backend_name() { return "bench"; }
 
+namespace {
+
+// Extract the eIQ build stamp (e.g. "b307_2025.02.05") from a Neutron binary's
+// embedded "clang version 14.0.0 (bNNN_YYYY.MM.DD ...)" string.
+std::string neutron_build_stamp(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return "";
+    std::string s;
+    char buf[1 << 16];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        s.append(buf, n);
+        if (s.size() > (48u << 20)) break;  // cap (converter .so can be ~10 MB)
+    }
+    std::fclose(f);
+    size_t cv = s.find("clang version");
+    if (cv == std::string::npos) return "";
+    size_t p = s.find("(b", cv);
+    if (p == std::string::npos) return "";
+    size_t e = s.find(' ', p);
+    if (e == std::string::npos) return "";
+    return s.substr(p + 1, e - p - 1);
+}
+
+std::vector<std::string> glob_one(const char* pattern) {
+    std::vector<std::string> out;
+    glob_t g{};
+    if (glob(pattern, 0, nullptr, &g) == 0)
+        for (size_t i = 0; i < g.gl_pathc; ++i) out.push_back(g.gl_pathv[i]);
+    globfree(&g);
+    return out;
+}
+
+}  // namespace
+
 CheckResult npu_check() {
+    // Surface the eIQ alignment picture: the running firmware's build, any
+    // converter present on the rootfs(es), and whether they match — a mismatch
+    // is what makes a converted model segfault the driver at execution.
+    std::string fw;
+    for (const char* p : {"/lib/firmware/NeutronFirmware.elf",
+                          "/usr/lib/firmware/NeutronFirmware.elf"}) {
+        fw = neutron_build_stamp(p);
+        if (!fw.empty()) break;
+    }
+    std::string conv;
+    for (const char* pat : {"/usr/lib/libNeutronConverter.so",
+                            "/run/media/*/usr/lib/libNeutronConverter.so",
+                            "/opt/*/libNeutronConverter.so"}) {
+        for (const auto& path : glob_one(pat)) {
+            conv = neutron_build_stamp(path);
+            if (!conv.empty()) break;
+        }
+        if (!conv.empty()) break;
+    }
+    std::string ctx;
+    if (!fw.empty()) ctx += "  [firmware " + fw + "]";
+    if (!conv.empty()) {
+        ctx += " [converter " + conv + "]";
+        if (!fw.empty() && conv != fw) ctx += " (!!) MISMATCH - inference will crash";
+    } else {
+        ctx += " [no on-board converter]";
+    }
+
     auto w = make_npu_workload();  // init() locates tools/model + probes one inference
     std::string err;
-    if (!w->init(err)) return {false, err};
+    if (!w->init(err)) return {false, err + ctx};
     w->shutdown();
-    return {true, "Neutron delegate inference probe OK"};
+    return {true, "Neutron inference OK" + ctx};
 }
 
 } // namespace imx95
