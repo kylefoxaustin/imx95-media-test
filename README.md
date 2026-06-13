@@ -266,7 +266,8 @@ aarch64-linux-gnu-strip build-aarch64/imx95-test
 # upload build-aarch64/imx95-test to the board and: sudo ./imx95-test
 ```
 
-Or grab the prebuilt binary from the [latest release](https://github.com/kylefoxaustin/imx95-media-test/releases).
+Or grab the prebuilt binary from the [latest release](https://github.com/kylefoxaustin/imx95-media-test/releases)
+— see [`CHANGELOG.md`](CHANGELOG.md) for what changed in each version.
 
 Run as **root** (the DDR PMU and codec/GPU nodes need it). On a new board, press
 **`c`** first to confirm what's runnable. Handy overrides:
