@@ -1,5 +1,7 @@
 # imx95-media-test
 
+[![CI](https://github.com/kylefoxaustin/imx95-media-test/actions/workflows/ci.yml/badge.svg)](https://github.com/kylefoxaustin/imx95-media-test/actions/workflows/ci.yml)
+
 An interactive, single-binary command-line harness for stressing the **NXP
 i.MX95** media/compute blocks — **GPU, VPU, NPU** — and measuring how loading one
 block affects another.
@@ -24,14 +26,14 @@ bandwidth; stop any time for a final report:
 ## Status — all four blocks run on real i.MX95 silicon
 
 GPU, VPU, NPU, and the DDR monitor are **all validated on real i.MX95 hardware**
-(an i.MX95 EVK, `lf-6.12.49_2.2.0` BSP). Each subsystem's backend is selected
+(an i.MX95 19×19 LPDDR5 EVK, `lf-6.12.49_2.2.0` BSP). Each subsystem's backend is selected
 independently at build time, and a full **mock** build runs the entire UI on any
 Linux host.
 
 | Subsystem | mock | real backend | on hardware |
 |-----------|:----:|------|------|
 | **GPU** | ✅ | `gles` — EGL + GLES2, headless via GBM (host Mesa **and** i.MX95 Mali) | ✅ working |
-| **VPU** | ✅ | `v4l2` — V4L2 mem2mem decode + encode; H.264 on the i.MX95 Wave VPU | ✅ working |
+| **VPU** | ✅ | `v4l2` — V4L2 mem2mem decode + encode on the i.MX95 **Wave6** VPU (H.264 default; HEVC via `IMX95_VPU_CODEC`) | ✅ working |
 | **NPU** | ✅ | `bench` — eIQ Neutron via `benchmark_model` + delegate | ✅ working&nbsp;\* |
 | **DDR** | ✅ | `pmu` — i.MX9 DDR perf counters via `perf_event_open` | ✅ working |
 
@@ -176,7 +178,7 @@ backends (see **[Running on an i.MX95](#running-on-an-imx95)** below).
 | Block | Workload | Levels |
 |-------|----------|--------|
 | **GPU** (Arm Mali-G310) | Procedural EGL/GLES scene, complexity scaled by resolution × geometry × lights × shader cost | `low` / `mid` / `max` |
-| **VPU** (Wave codec, V4L2 mem2mem) | Decode and/or encode | `720p` / `1080p` / `4k`, decode and encode independently |
+| **VPU** (Wave6 codec, V4L2 mem2mem) | Decode and/or encode (H.264 default; HEVC via `IMX95_VPU_CODEC`) | `720p` / `1080p` / `4k`, decode and encode independently |
 | **NPU** (eIQ Neutron) | Looped quantized-TFLite inference via the Neutron delegate | on / off (needs a BSP-matched model — convert on-target via `n` or on a host, see below) |
 
 Decode and encode are independent (run both at once), but each is
@@ -203,14 +205,18 @@ frames captured headless with `IMX95_GPU_DUMP=<path.ppm>`.)
 ## What it found on real silicon
 
 Running the blocks together on an i.MX95 EVK surfaced behavior you won't get from
-a datasheet:
+a datasheet. (The bullets below are from the `lf-6.12.49_2.2.0` board; the
+**Capstone** further down is a *second, older* `b307` board running a different
+model — which is why its NPU rate differs.)
 
 - **The GPU is isolated.** GPU `mid` holds ~66–70 fps whether alone or under full
   VPU load — Mali is a separate engine and is compute-bound (~1–1.5 GB/s DDR).
-- **The Wave VPU time-shares one engine between encode and decode.** Run a decode
-  and an encode together and they converge to *identical* fps (e.g. 1080p
-  dec+enc → ~157/157 fps), with decode dropping ~25–50%. That's a single
-  time-sliced codec engine, not independent enc/dec hardware.
+- **The Wave6 VPU behaves as one shared codec resource for encode + decode.** Run
+  a decode and an encode together and they converge to *identical* fps (e.g. 1080p
+  dec+enc → ~157/157 fps), with decode dropping ~25–50%. That's consistent with a
+  single time-sliced codec engine (or a shared clock/bandwidth domain) rather than
+  independent enc/dec hardware — an *observation* from the fps convergence, not a
+  claim about the RM-level block diagram.
 - **The Neutron NPU is largely isolated too.** MobileNet inference holds ~554
   inf/s under a full GPU `mid` + 1080p-decode load vs ~590 standalone (~6%, much
   of that the harness re-launching the runner per batch) — like the GPU, a
@@ -227,24 +233,26 @@ simultaneously:
 | Block | Maxed together | Alone | Read |
 |---|---|---|---|
 | GPU `max` | 7.8 fps | ~8 fps | isolated, compute-bound |
-| DEC 4k | **43.6 fps** | ~100 fps | ↓56% — shares the Wave engine |
+| DEC 4k | **43.6 fps** | ~100 fps | ↓56% — shares the Wave6 codec |
 | ENC 4k | **43.6 fps** | ~61 fps | ↓28% — *converges* with decode |
-| NPU | **341.5 fps** | ~353 fps | ↓3% — own engine, barely flinches |
+| NPU | **341.5 inf/s** | ~353 inf/s | ↓3% — own engine, barely flinches |
 | DDR | **13.6 GB/s** (1.05 TB / 78 s) | — | 4K codec is the memory driver |
 
-The 4K decode and encode collapsing to the *exact same* 43.6 fps is the single
-time-sliced Wave engine, proven the hard way; the NPU holding station is Neutron's
-isolation. That cross-block insight — invisible from specs — is exactly what the
-harness is for.
+The 4K decode and encode collapsing to the *exact same* 43.6 fps is consistent
+with a single time-sliced Wave6 codec, shown the hard way; the NPU holding station
+is Neutron's isolation. That cross-block insight — invisible from specs — is
+exactly what the harness is for.
 
 **On converter compatibility (a useful correction).** We originally branded b307
 "the board nothing could convert for" because the early **PyPI SDK-quarter**
 converters segfaulted on it. The AI Hub tells a different story: its converters
 **2.2.1, 2.2.3, *and* 3.0.0** all ran on b307 (347.9 / 353.5 / 356.4 inf/s
 standalone — a full major version apart). So the real takeaway isn't "match the
-version to the byte or it crashes" — it's that the tolerance is **wide**, the early
-quarter packages were simply the wrong lineage for i.MX95, and the **eIQ AI Hub is
-the robust way to get a working model**, especially on an older BSP.
+version to the byte or it crashes" — it's that the tolerance is **wide**, and the
+**eIQ AI Hub is the robust way to get a working model**, especially on an older
+BSP. (Empirically the early PyPI SDK-quarter packages produced microcode this
+firmware rejected while the AI Hub's didn't; we did not root-cause *why* — treat
+it as "use the AI Hub," not a confirmed version rule.)
 
 ## Running on an i.MX95
 
@@ -397,6 +405,10 @@ Created and maintained by **Kyle Fox** ([@kylefoxaustin](https://github.com/kyle
 Built in close collaboration with **Claude** (Anthropic) — from the first EGL/V4L2
 plumbing through cracking the eIQ Neutron converter↔BSP puzzle and getting all four
 blocks running on real silicon. Thanks, Claude. 🤖🤝
+
+> **Independent project — not an official NXP product or release.** *i.MX*, *eIQ*,
+> and *Neutron* are trademarks of NXP Semiconductors, used here only to describe
+> the hardware this tool targets.
 
 ## License
 

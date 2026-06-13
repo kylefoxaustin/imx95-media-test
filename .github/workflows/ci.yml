@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
+      - name: Build (all-mock, default backends)
+        run: |
+          cmake -S . -B build
+          cmake --build build -j
+
+      - name: Build (bench NPU backend, host)
+        run: |
+          cmake -S . -B build-bench -DIMX95_NPU=bench
+          cmake --build build-bench -j
+
+      - name: Menu walkthrough (ASan+UBSan — every menu path + NPU resolution)
+        run: ./tests/menu_walkthrough.sh
